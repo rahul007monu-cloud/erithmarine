@@ -1,0 +1,16 @@
+{
+  "name": "edith-maritime-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Edith Maritime Services — scroll-driven 3D marine site. Static, no build step.",
+  "//": "type=module declares that api/*.js are ES modules, which stops Vercel transpiling them to CommonJS. There are intentionally no dependencies: the WebGL renderer is written from scratch and the browser code loads as native ES modules.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "python3 -m http.server 8000",
+    "start": "python3 -m http.server 8000"
+  },
+  "license": "UNLICENSED"
+}
