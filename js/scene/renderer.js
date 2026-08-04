@@ -157,6 +157,16 @@ export class Renderer {
     this._lightRanges = new Float32Array(this.maxLights);
     this._lightCount = 0;
 
+    // Planar reflection of the vessel in the water. Rendered at half resolution:
+    // the result is displaced by wave normals and composited at partial weight,
+    // so full resolution would be invisible effort.
+    this.reflectionScale = 0.5;
+    this.reflectionStrength = 0.85;
+    this._reflectionMatrix = mat4.fromScaling(mat4.create(), vec3.create(1, -1, 1));
+    this._reflectionView = mat4.create();
+    this._reflectionViewProjection = mat4.create();
+    this._resolution = new Float32Array(2);
+
     this.targets = null;
     this.width = 0;
     this.height = 0;
@@ -215,6 +225,7 @@ export class Renderer {
       this.targets.scene.dispose();
       this.targets.bloomA.dispose();
       this.targets.bloomB.dispose();
+      this.targets.reflection.dispose();
     }
 
     const bloomWidth = Math.max(2, Math.floor(width / 4));
@@ -224,6 +235,12 @@ export class Renderer {
       scene: createFramebuffer(gl, width, height, { depth: true, float: true }),
       bloomA: createFramebuffer(gl, bloomWidth, bloomHeight, { depth: false, float: true }),
       bloomB: createFramebuffer(gl, bloomWidth, bloomHeight, { depth: false, float: true }),
+      reflection: createFramebuffer(
+        gl,
+        Math.max(2, Math.floor(width * this.reflectionScale)),
+        Math.max(2, Math.floor(height * this.reflectionScale)),
+        { depth: true, float: true },
+      ),
     };
 
     this.canvas.width = width;
@@ -315,6 +332,83 @@ export class Renderer {
 
       program.set('uModel', item.model);
       program.set('uInstanced', item.instanced ? 1 : 0);
+      item.mesh.draw();
+    }
+
+    gl.cullFace(gl.BACK);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  /**
+   * Renders the vessel mirrored through the water plane.
+   *
+   * The view matrix is post-multiplied by a scale of (1, -1, 1), which is an
+   * exact reflection about y = 0. That flips handedness, so triangle winding
+   * inverts and the depth pass must cull front faces instead of back ones.
+   *
+   * Only the sky is skipped and only exterior geometry is drawn: the target is
+   * cleared to zero alpha, so alpha doubles as a mask telling the ocean shader
+   * where the hull actually appears and where the sky reflection should show
+   * through instead.
+   */
+  _renderReflection(solids, shared) {
+    const gl = this.gl;
+    const target = this.targets.reflection;
+
+    mat4.multiply(this._reflectionView, this._view, this._reflectionMatrix);
+    mat4.multiply(
+      this._reflectionViewProjection, this._projection, this._reflectionView,
+    );
+
+    target.bind();
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    gl.cullFace(gl.FRONT);
+
+    const program = this.programs.solid.use();
+    program.setTexture('uNoise', this.noise, 3);
+    if (this.shadow) program.setTexture('uShadowMap', this.shadow.texture, 1);
+    program.setAll({
+      ...shared,
+      ...this._shadowUniforms(),
+      uProjection: this._projection,
+      uView: this._reflectionView,
+      uAmbientScale: 1,
+      uLightPosition: this._lightPositions,
+      uLightColor: this._lightColors,
+      uLightRange: this._lightRanges,
+      uLightCount: 0,
+      uReflectionStrength: 0,
+    });
+
+    for (const item of solids) {
+      if (item.hidden || item.transparent) continue;
+      // Interior spaces are inside the hull and can never appear in the water.
+      if (item.space) continue;
+
+      const material = item.material
+        ? { ...DEFAULT_MATERIAL, ...item.material }
+        : DEFAULT_MATERIAL;
+
+      program.setAll({
+        uModel: item.model,
+        uInstanced: item.instanced ? 1 : 0,
+        uRoughness: material.roughness,
+        uMetallic: material.metallic,
+        uEmissive: material.emissive,
+        uAmbientOcclusion: material.ambientOcclusion,
+        uTintColor: material.tintColor,
+        uTintAmount: material.tintAmount,
+        uWaterlineY: material.waterlineY,
+        uWaterlineAmount: material.waterlineAmount,
+        uSunlit: material.sunlit,
+        uOpacity: 1,
+        uWeather: material.weather,
+        uPanelSize: material.panelSize,
+        uCorrugation: material.corrugation,
+        uUseMap: 0,
+      });
       item.mesh.draw();
     }
 
@@ -423,6 +517,8 @@ export class Renderer {
     mat4.invert(this._inverseViewProjection, this._viewProjection);
 
     this._cameraPosition = camera.position;
+    this._resolution[0] = this.width;
+    this._resolution[1] = this.height;
     const shared = this._environmentUniforms(time);
 
     // ----------------------------------------------------------- shadow pass
@@ -437,6 +533,14 @@ export class Renderer {
         );
       }
     }
+
+    // ------------------------------------------------------- reflection pass
+    // Only worth doing when water is actually on screen.
+    const wantsReflection =
+      frame.ocean && frame.showOcean !== false &&
+      frame.solids && frame.solids.length && this.reflectionStrength > 0;
+
+    if (wantsReflection) this._renderReflection(frame.solids, shared);
 
     // ------------------------------------------------------------ scene pass
     this.targets.scene.bind();
@@ -489,8 +593,11 @@ export class Renderer {
         uShipExtent: this._shipExtent,
         uShipShadow: vessel ? (vessel.shadow !== undefined ? vessel.shadow : 0.9) : 0,
         uShipWake: vessel ? (vessel.wake !== undefined ? vessel.wake : 1) : 0,
+        uResolution: this._resolution,
+        uReflectionStrength: wantsReflection ? this.reflectionStrength : 0,
       });
       program.setTexture('uNoise', frame.ocean.noise, 0);
+      program.setTexture('uReflection', this.targets.reflection.color, 2);
 
       // Steep crests can present back faces; drawing both sides avoids holes.
       gl.disable(gl.CULL_FACE);
@@ -510,6 +617,7 @@ export class Renderer {
         uProjection: this._projection,
         uView: this._view,
         uAmbientScale: this.ambientScale,
+        uReflectionStrength: 0,
         uLightPosition: this._lightPositions,
         uLightColor: this._lightColors,
         uLightRange: this._lightRanges,
@@ -587,6 +695,7 @@ export class Renderer {
       this.targets.scene.dispose();
       this.targets.bloomA.dispose();
       this.targets.bloomB.dispose();
+      this.targets.reflection.dispose();
     }
   }
 }

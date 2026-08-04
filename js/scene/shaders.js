@@ -384,6 +384,20 @@ uniform vec3  uDeepColor;
 uniform float uCloudAmount;
 uniform sampler2D uNoise;
 uniform float uFoamAmount;
+
+/*
+ * Planar reflection of the vessel.
+ *
+ * Rendered from a camera mirrored through the water plane using the same
+ * projection, so for a flat mirror the reflected image lands on exactly the same
+ * screen coordinate as the water fragment. Waves are accounted for by displacing
+ * the lookup with the surface normal. Alpha marks where the mirrored pass
+ * actually drew geometry, leaving the sky reflection everywhere else.
+ */
+uniform sampler2D uReflection;
+uniform float uReflectionStrength;
+uniform vec2  uResolution;
+
 // Vessel frame, used for both the hull's contact shadow and its wake.
 uniform vec3  uShipPosition;
 uniform float uShipHeading;   // radians, 0 = bow toward +Z
@@ -434,12 +448,35 @@ void main() {
   vec3 reflectDir = reflect(-viewDir, n);
   reflectDir.y = abs(reflectDir.y) * 0.92 + 0.02;
 
+  // How square-on we are to the surface. Declared here because both the
+  // reflection weighting and the water body colour below depend on it.
+  float facing = saturate(dot(n, viewDir));
+
   vec3 skyReflection = skyColor(reflectDir, uCloudAmount);
+
+  if (uReflectionStrength > 0.001) {
+    vec2 screenUV = gl_FragCoord.xy / uResolution;
+
+    // Displacement falls off with distance, otherwise the horizon smears.
+    float ripple = 0.06 * exp(-distance * 0.0011);
+    vec2 reflectUV = clamp(
+      screenUV + vec2(n.x, n.z) * ripple,
+      vec2(0.002), vec2(0.998)
+    );
+
+    vec4 mirrored = texture(uReflection, reflectUV);
+
+    // Grazing angles reflect far more strongly, which is what makes a hull
+    // smear down the water rather than sit as a hard copy of itself.
+    float grazing = 1.0 - saturate(facing);
+    float weight = mirrored.a * uReflectionStrength * (0.45 + grazing * 0.55);
+
+    skyReflection = mix(skyReflection, mirrored.rgb, saturate(weight));
+  }
 
 
   // Water body colour: deep where we look straight down, brighter at grazing
   // angles, with a touch of forward scattering through wave crests.
-  float facing = saturate(dot(n, viewDir));
   vec3 body = mix(uDeepColor, uShallowColor, pow(1.0 - facing, 1.6));
 
   float scatter = pow(vCrest, 2.2) * saturate(dot(uSunDirection, -viewDir) * 0.5 + 0.5);
