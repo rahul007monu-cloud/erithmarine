@@ -505,14 +505,26 @@ function buildBoottop() {
 
 const CONTAINER = { length: 12.19, width: 2.44, height: 2.59 };
 
+/**
+ * Container liveries. Weighted by repetition rather than picked uniformly at
+ * random: on a real vessel a handful of operators dominate the stack, so a few
+ * colours recur constantly and the bright outliers are rare. Sampling a flat
+ * random palette is what makes CG container stacks look like confectionery.
+ */
 const CONTAINER_COLORS = [
-  [0.62, 0.14, 0.11],  // oxide red
-  [0.09, 0.26, 0.46],  // deep blue
-  [0.13, 0.34, 0.24],  // green
-  [0.55, 0.35, 0.10],  // ochre
-  [0.42, 0.44, 0.46],  // grey
-  [0.68, 0.44, 0.13],  // orange
-  [0.30, 0.32, 0.40],  // slate
+  [0.34, 0.11, 0.09],   // oxide red
+  [0.34, 0.11, 0.09],
+  [0.34, 0.11, 0.09],
+  [0.09, 0.20, 0.34],   // deep blue
+  [0.09, 0.20, 0.34],
+  [0.09, 0.20, 0.34],
+  [0.28, 0.29, 0.30],   // weathered grey
+  [0.28, 0.29, 0.30],
+  [0.13, 0.26, 0.20],   // green
+  [0.13, 0.26, 0.20],
+  [0.40, 0.26, 0.09],   // ochre
+  [0.44, 0.28, 0.10],   // orange
+  [0.24, 0.25, 0.31],   // slate
   [0.055, 0.085, 0.14], // company navy
 ];
 
@@ -573,7 +585,7 @@ function buildContainerInstances() {
         const color = CONTAINER_COLORS[(random() * CONTAINER_COLORS.length) | 0];
         // Slight per-box brightness variation so identical colours still read
         // as separate containers.
-        const shade = 0.82 + random() * 0.36;
+        const shade = 0.90 + random() * 0.18;
         colors.push(color[0] * shade, color[1] * shade, color[2] * shade);
       }
     }
@@ -627,6 +639,9 @@ export function createShip(gl) {
         tintAmount: 1.0,
         waterlineY: 0.6,
         waterlineAmount: 0.85,
+        // Shell plating runs roughly 2.4 m; salt and rust streak heavily here.
+        weather: 0.6,
+        panelSize: 2.4,
       },
     },
     {
@@ -638,6 +653,8 @@ export function createShip(gl) {
         metallic: 0.04,
         tintColor: PALETTE.boottop,
         tintAmount: 1.0,
+        weather: 0.8,
+        panelSize: 2.4,
       },
     },
     {
@@ -650,38 +667,55 @@ export function createShip(gl) {
         tintColor: PALETTE.deck,
         tintAmount: 1.0,
         ambientOcclusion: 0.8,
+        weather: 1.0,
+        panelSize: 1.6,
       },
     },
     {
       name: 'hatches',
       mesh: hatchMesh,
       model,
-      material: { roughness: 0.74, metallic: 0.05, ambientOcclusion: 0.88 },
+      material: {
+        roughness: 0.74, metallic: 0.05, ambientOcclusion: 0.88,
+        weather: 0.9, panelSize: 2.0,
+      },
     },
     {
       name: 'containers',
       mesh: containerMesh,
       model,
       instanced: true,
-      material: { roughness: 0.70, metallic: 0.04, ambientOcclusion: 0.9 },
+      material: {
+        roughness: 0.70, metallic: 0.04, ambientOcclusion: 0.9,
+        weather: 0.72, corrugation: 8.2,
+      },
     },
     {
       name: 'accommodation',
       mesh: accommodationMesh,
       model,
-      material: { roughness: 0.60, metallic: 0.03 },
+      material: {
+        roughness: 0.60, metallic: 0.03,
+        weather: 0.42, panelSize: 1.2,
+      },
     },
     {
       name: 'funnel',
       mesh: funnelMesh,
       model,
-      material: { roughness: 0.55, metallic: 0.05 },
+      material: {
+        roughness: 0.55, metallic: 0.05,
+        weather: 0.85, panelSize: 1.4,
+      },
     },
     {
       name: 'details',
       mesh: detailMesh,
       model,
-      material: { roughness: 0.4, metallic: 0.45 },
+      material: {
+        roughness: 0.45, metallic: 0.4,
+        weather: 0.8,
+      },
     },
     {
       name: 'glass',

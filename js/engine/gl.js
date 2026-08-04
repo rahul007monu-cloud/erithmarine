@@ -518,6 +518,69 @@ export function createFramebuffer(gl, width, height, options = {}) {
   };
 }
 
+/**
+ * Depth-only render target, for shadow maps.
+ *
+ * Has no colour attachment: the fragment shader writes nothing and only depth
+ * is retained, which is both faster and exactly what a shadow lookup needs.
+ * The depth texture is sampled as a normal sampler2D (comparison mode stays
+ * off), so the raw depth arrives in the red channel.
+ */
+export function createDepthTarget(gl, size) {
+  const handle = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, handle);
+  gl.texImage2D(
+    gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, size, size, 0,
+    gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null,
+  );
+  // Linear filtering on a depth texture is not universally supported, and the
+  // shadow lookup does its own multi-tap filtering, so nearest is correct here.
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  // Clamping to the edge would smear the border depth across the scene; clamp
+  // to a border-like behaviour by keeping lookups inside the map in the shader.
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+
+  const fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(
+    gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, handle, 0,
+  );
+
+  // With no colour attachment the draw buffer list must say so explicitly.
+  // Left at its default of COLOR_ATTACHMENT0, drivers discard the draw calls
+  // and the depth buffer comes back empty. This state is stored per-framebuffer,
+  // so setting it once here is enough.
+  gl.drawBuffers([gl.NONE]);
+
+  const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+  if (status !== gl.FRAMEBUFFER_COMPLETE) {
+    gl.deleteFramebuffer(fbo);
+    gl.deleteTexture(handle);
+    throw new Error(`depth target incomplete: 0x${status.toString(16)}`);
+  }
+
+  const texture = { handle, target: gl.TEXTURE_2D, width: size, height: size };
+
+  return {
+    fbo,
+    texture,
+    size,
+    bind() {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.viewport(0, 0, size, size);
+    },
+    dispose() {
+      gl.deleteFramebuffer(fbo);
+      gl.deleteTexture(handle);
+    },
+  };
+}
+
 /** Full-screen triangle for post-processing — no vertex buffer required. */
 export const FULLSCREEN_VERT = /* glsl */ `#version 300 es
 precision highp float;

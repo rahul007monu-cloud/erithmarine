@@ -14,10 +14,15 @@ import { mat4, vec3, DEG } from '../engine/math.js';
 import {
   Program,
   createFramebuffer,
+  createDepthTarget,
+  createNoiseTexture,
   drawFullscreen,
   FULLSCREEN_VERT,
 } from '../engine/gl.js';
 import {
+  SHADOW_VERT,
+  SHADOW_FRAG,
+  SHADOW_DEBUG_FRAG,
   SKY_FRAG,
   OCEAN_VERT,
   OCEAN_FRAG,
@@ -79,6 +84,10 @@ const DEFAULT_MATERIAL = {
   // 1 = alpha-blended decal, 2 = opaque texture.
   mapMode: 1,
   opacity: 1.0,
+  // Procedural surface detail.
+  weather: 0.0,
+  panelSize: 0.0,
+  corrugation: 0.0,
 };
 
 export class Renderer {
@@ -93,9 +102,38 @@ export class Renderer {
       bright: new Program(gl, FULLSCREEN_VERT, BRIGHT_FRAG, 'bright'),
       blur: new Program(gl, FULLSCREEN_VERT, BLUR_FRAG, 'blur'),
       composite: new Program(gl, FULLSCREEN_VERT, COMPOSITE_FRAG, 'composite'),
+      shadow: new Program(gl, SHADOW_VERT, SHADOW_FRAG, 'shadow'),
+      shadowDebug: new Program(gl, FULLSCREEN_VERT, SHADOW_DEBUG_FRAG, 'shadowDebug'),
     };
 
     this.environment = { ...GOLDEN_HOUR };
+
+    // Shared detail noise for surface weathering and water ripples.
+    this.noise = createNoiseTexture(gl, 512, 11);
+
+    // Directional shadow map for the vessel. 2048 is plenty for a single tight
+    // orthographic map covering a 300 m hull.
+    this.shadowSize = 1024;
+    this.shadow = null;
+    this.shadowStrength = 0.88;
+    // The sun does not move and the hull only rises on a slow swell, so the
+    // map is refreshed every few frames instead of every one.
+    this.shadowInterval = 4;
+    this._shadowTick = 0;
+    this._lightView = mat4.create();
+    this._lightProjection = mat4.create();
+    this._lightViewProjection = mat4.create();
+    this._lightEye = vec3.create();
+    this._shadowCenter = vec3.create();
+
+    try {
+      this.shadow = createDepthTarget(gl, this.shadowSize);
+    } catch (error) {
+      // Some drivers refuse depth-texture targets. Losing shadows is far better
+      // than losing the whole scene.
+      console.warn('[renderer] shadow map unavailable', error);
+      this.shadowStrength = 0;
+    }
 
     // Reused matrices — the render loop must not allocate.
     this._projection = mat4.create();
@@ -234,6 +272,66 @@ export class Renderer {
   }
 
   /**
+   * Builds the light matrices and renders the shadow map.
+   *
+   * The orthographic box is fitted around the vessel rather than the camera
+   * frustum: the ship is the only meaningful caster, and a tight box gives
+   * sharp shadows that a camera-fitted cascade could not match at this size.
+   */
+  _renderShadowMap(solids, focus, radius) {
+    const gl = this.gl;
+    if (!this.shadow || this.shadowStrength <= 0) return;
+
+    vec3.copy(this._shadowCenter, focus);
+
+    // Place the light far enough back that the whole vessel is in front of the
+    // near plane, including masts and container stacks.
+    const distance = radius * 2.2;
+    vec3.scaleAndAdd(this._lightEye, this._shadowCenter, this._sunDirection, distance);
+
+    mat4.lookAt(this._lightView, this._lightEye, this._shadowCenter, this._up);
+    mat4.ortho(
+      this._lightProjection,
+      -radius, radius,
+      -radius, radius,
+      1.0, distance + radius * 2.4,
+    );
+    mat4.multiply(this._lightViewProjection, this._lightProjection, this._lightView);
+
+    this.shadow.bind();
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+
+    // Front-face culling during the depth pass moves any remaining acne to
+    // surfaces the camera cannot see.
+    gl.cullFace(gl.FRONT);
+
+    const program = this.programs.shadow.use();
+    program.set('uLightViewProjection', this._lightViewProjection);
+
+    for (const item of solids) {
+      if (item.hidden || item.transparent) continue;
+      // Interior geometry is enclosed; casting from it only adds acne.
+      if (item.noShadow) continue;
+
+      program.set('uModel', item.model);
+      program.set('uInstanced', item.instanced ? 1 : 0);
+      item.mesh.draw();
+    }
+
+    gl.cullFace(gl.BACK);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  /** Uniforms every shadow-receiving pass needs. */
+  _shadowUniforms() {
+    return {
+      uLightViewProjection: this._lightViewProjection,
+      uShadowStrength: this.shadow ? this.shadowStrength : 0,
+      uShadowTexel: 1 / this.shadowSize,
+    };
+  }
+
+  /**
    * Draws one pass of the solid list, filtered by transparency.
    *
    * Transparent items blend against the depth buffer written by the opaque
@@ -275,6 +373,9 @@ export class Renderer {
         uWaterlineAmount: material.waterlineAmount,
         uSunlit: material.sunlit,
         uOpacity: material.opacity,
+        uWeather: material.weather,
+        uPanelSize: material.panelSize,
+        uCorrugation: material.corrugation,
         uUseMap: material.map ? material.mapMode : 0,
       });
 
@@ -324,6 +425,19 @@ export class Renderer {
     this._cameraPosition = camera.position;
     const shared = this._environmentUniforms(time);
 
+    // ----------------------------------------------------------- shadow pass
+    if (frame.solids && frame.solids.length && frame.shadowFocus) {
+      const due = (this._shadowTick % this.shadowInterval) === 0;
+      this._shadowTick++;
+      if (due) {
+        this._renderShadowMap(
+          frame.solids,
+          frame.shadowFocus,
+          frame.shadowRadius || 200,
+        );
+      }
+    }
+
     // ------------------------------------------------------------ scene pass
     this.targets.scene.bind();
     gl.clearColor(0, 0, 0, 1);
@@ -357,8 +471,10 @@ export class Renderer {
       this._oceanOrigin[1] = camera.position[2];
 
       const program = this.programs.ocean.use();
+      if (this.shadow) program.setTexture('uShadowMap', this.shadow.texture, 1);
       program.setAll({
         ...shared,
+        ...this._shadowUniforms(),
         uProjection: this._projection,
         uView: this._view,
         uOceanOrigin: this._oceanOrigin,
@@ -386,8 +502,11 @@ export class Renderer {
     const solids = frame.solids;
     if (solids && solids.length) {
       const program = this.programs.solid.use();
+      program.setTexture('uNoise', this.noise, 3);
+      if (this.shadow) program.setTexture('uShadowMap', this.shadow.texture, 1);
       program.setAll({
         ...shared,
+        ...this._shadowUniforms(),
         uProjection: this._projection,
         uView: this._view,
         uAmbientScale: this.ambientScale,
@@ -434,6 +553,15 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.width, this.height);
 
+    // Development aid: draw the raw shadow map instead of the scene.
+    if (this.debugShadowMap && this.shadow) {
+      this.programs.shadowDebug.use().setTexture('uShadowMap', this.shadow.texture, 0);
+      drawFullscreen(gl);
+      gl.depthMask(true);
+      gl.enable(gl.DEPTH_TEST);
+      return;
+    }
+
     this.programs.composite.use()
       .setTexture('uScene', scene.color, 0)
       .setTexture('uBloom', bloomA.color, 1)
@@ -452,6 +580,8 @@ export class Renderer {
   }
 
   dispose() {
+    this.gl.deleteTexture(this.noise.handle);
+    if (this.shadow) this.shadow.dispose();
     for (const key in this.programs) this.programs[key].dispose();
     if (this.targets) {
       this.targets.scene.dispose();

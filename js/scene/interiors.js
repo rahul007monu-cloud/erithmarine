@@ -653,6 +653,29 @@ function buildShipOffice() {
 
 /* ---------------------------------------------------------------- assembly */
 
+/** How worn each space looks. Engine spaces are filthy; cabins are not. */
+const INTERIOR_WEATHER = {
+  bridge: 0.16,
+  engineRoom: 0.95,
+  engineControlRoom: 0.3,
+  crewMess: 0.2,
+  cabin: 0.12,
+  cargoHold: 1.0,
+  shipOffice: 0.22,
+};
+
+/** Plate seam spacing per space, in metres. 0 leaves the surface unseamed. */
+const PANEL_SIZE = {
+  bridge: 0.0,
+  engineRoom: 1.2,
+  engineControlRoom: 0.0,
+  crewMess: 0.0,
+  cabin: 0.0,
+  cargoHold: 1.8,
+  shipOffice: 0.0,
+};
+
+
 /**
  * Builds all interiors and returns draw batches.
  *
@@ -682,15 +705,26 @@ export function createInteriors(gl, shipModel) {
     batches.push({
       name: `${name}:body`,
       space: name,
+      noShadow: true,
       mesh: bodyMesh,
       model: shipModel,
       doubleSided: true,
-      material: { roughness: 0.7, metallic: 0.12, ambientOcclusion: 0.55, sunlit: 0.05 },
+      // Machinery and cargo spaces are worked in and grimy; accommodation is
+      // cleaned daily, so weathering is tuned per space rather than globally.
+      material: {
+        roughness: 0.7,
+        metallic: 0.12,
+        ambientOcclusion: 0.55,
+        sunlit: 0.05,
+        weather: INTERIOR_WEATHER[name] !== undefined ? INTERIOR_WEATHER[name] : 0.4,
+        panelSize: PANEL_SIZE[name] !== undefined ? PANEL_SIZE[name] : 0.0,
+      },
     });
 
     batches.push({
       name: `${name}:emissive`,
       space: name,
+      noShadow: true,
       mesh: emissiveMesh,
       model: shipModel,
       doubleSided: true,

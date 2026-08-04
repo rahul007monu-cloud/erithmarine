@@ -34,6 +34,9 @@ const state = {
 // Surfaced for debugging and read by the dev screenshot harness.
 window.__boot = { mode: 'pending', errors: [] };
 
+/** Centre of the directional shadow box, roughly mid-hull at deck height. */
+const SHADOW_FOCUS = [0, 10, 0];
+
 /** Frames to render before halting, when driven by the dev harness. */
 function captureFrames() {
   const value = new URLSearchParams(location.search).get('capture');
@@ -168,21 +171,35 @@ async function bootScene() {
     wake: 1,
   };
 
-  // Device pixel ratio is capped: beyond 2x the cost is real and the gain is not.
-  const resize = () => {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  /**
+   * Resolution is the single biggest lever on frame cost, and the ocean and sky
+   * shaders are expensive per pixel. A retina display at 2x would ask for four
+   * times the pixels of a 1x buffer for detail that is invisible on water.
+   *
+   * `renderScale` is adjusted at runtime by the frame-time monitor, so a slow
+   * machine quietly drops resolution instead of stuttering.
+   */
+  const quality = {
+    baseDpr: Math.min(window.devicePixelRatio || 1, 1.5),
+    renderScale: 1,
+    minScale: 0.55,
+  };
+
+  const applySize = () => {
+    const effective = quality.baseDpr * quality.renderScale;
     renderer.resize(
-      Math.max(320, Math.round(window.innerWidth * dpr)),
-      Math.max(240, Math.round(window.innerHeight * dpr)),
+      Math.max(320, Math.round(window.innerWidth * effective)),
+      Math.max(240, Math.round(window.innerHeight * effective)),
     );
   };
-  resize();
-  window.addEventListener('resize', debounce(resize, 140));
+  applySize();
+  window.addEventListener('resize', debounce(applySize, 140));
 
   return {
     renderer, ocean, ship, interiors, journey, solids, vessel,
     GOLDEN_HOUR, MOODS, shipPose, applyShipPose,
     stopCount: STOPS.length,
+    quality, applySize,
   };
 }
 
@@ -287,6 +304,46 @@ function startLoop(scene) {
   const frameBudget = captureFrames();
   let frameCount = 0;
 
+  /**
+   * Frame-time monitor driving adaptive quality.
+   *
+   * Uses a rolling mean rather than instantaneous timings, because a single slow
+   * frame during a scroll flick is normal and should not trigger a downgrade.
+   */
+  const perf = {
+    mean: 16.7,
+    samples: 0,
+    cooldown: 0,
+  };
+
+  function adaptQuality(dtMs) {
+    // Ignore the first handful of frames: shader compilation and buffer upload
+    // land there and would immediately force the resolution down.
+    if (perf.samples++ < 20) return;
+
+    perf.mean += (dtMs - perf.mean) * 0.06;
+
+    if (perf.cooldown > 0) {
+      perf.cooldown--;
+      return;
+    }
+
+    const q = scene.quality;
+
+    // Below ~45 fps: step down. Above ~70 fps with headroom: step back up.
+    if (perf.mean > 22 && q.renderScale > q.minScale) {
+      q.renderScale = Math.max(q.minScale, q.renderScale - 0.12);
+      scene.applySize();
+      perf.cooldown = 90;
+      window.__boot.renderScale = Number(q.renderScale.toFixed(2));
+    } else if (perf.mean < 13.5 && q.renderScale < 1) {
+      q.renderScale = Math.min(1, q.renderScale + 0.08);
+      scene.applySize();
+      perf.cooldown = 150;
+      window.__boot.renderScale = Number(q.renderScale.toFixed(2));
+    }
+  }
+
   const pointer = { x: 0, y: 0 };
   window.addEventListener('pointermove', (event) => {
     pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -299,9 +356,12 @@ function startLoop(scene) {
   function frame(now) {
     if (!state.running) return;
 
-    const dt = Math.min((now - last) / 1000, 0.05);
+    const elapsedMs = now - last;
+    const dt = Math.min(elapsedMs / 1000, 0.05);
     last = now;
     const time = now / 1000;
+
+    if (!frameBudget) adaptQuality(elapsedMs);
 
     journey.setProgress(scrollProgress());
     journey.setPointer(pointer.x, pointer.y);
@@ -340,6 +400,10 @@ function startLoop(scene) {
       showOcean: moodPreset.showOcean !== false,
       solids,
       vessel,
+      // The vessel is the only caster worth resolving, so the shadow box is
+      // fitted to it rather than to the camera frustum.
+      shadowFocus: SHADOW_FOCUS,
+      shadowRadius: 210,
     });
 
     updatePanels(journey.progress, renderer.fadeToBlack);

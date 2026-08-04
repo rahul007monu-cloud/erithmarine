@@ -42,17 +42,22 @@ float noise2(vec2 p) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-/** Fractal brownian motion — 5 octaves, rotated each step to hide the lattice. */
+/**
+ * Fractal brownian motion. Three octaves, rotated each step to hide the
+ * lattice. Deliberately short: this runs per-pixel for the sky, the water
+ * reflection and every lit surface, so each extra octave costs a measurable
+ * slice of the frame budget for detail nobody can see at cloud distance.
+ */
 float fbm(vec2 p) {
   float total = 0.0;
   float amplitude = 0.5;
   const mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 3; i++) {
     total += noise2(p) * amplitude;
     p = rot * p * 2.02;
     amplitude *= 0.5;
   }
-  return total;
+  return total * 1.14;
 }
 
 /** Schlick approximation of the Fresnel term. */
@@ -108,8 +113,8 @@ float cloudDensity(vec3 dir) {
   p += vec2(uTime * 0.0035, uTime * 0.0012);
 
   float base = fbm(p);
-  float detail = fbm(p * 3.1 + 4.7);
-  float density = base * 0.75 + detail * 0.25;
+  float detail = noise2(p * 3.1 + 4.7);
+  float density = base * 0.78 + detail * 0.22;
 
   // Fade clouds out toward the horizon so the deck reads as a flat ceiling.
   float horizonFade = smoothstep(0.015, 0.30, dir.y);
@@ -216,6 +221,83 @@ vec3 applyFog(vec3 color, float distance, vec3 viewDir) {
 }
 `;
 
+/**
+ * Shadow lookup, shared by the ocean and solid passes.
+ *
+ * A single directional shadow map covering the vessel. Nothing else in the
+ * scene is large enough to cast a shadow worth resolving, so one tight
+ * orthographic map gives far better quality than a cascade would at this size.
+ *
+ * Requires: COMMON.
+ */
+const SHADOW = /* glsl */ `
+uniform sampler2D uShadowMap;
+uniform mat4  uLightViewProjection;
+uniform float uShadowStrength;
+uniform float uShadowTexel;   // 1 / shadow map resolution
+
+/**
+ * @param worldPos surface position
+ * @param n        surface normal, used to offset out of its own shadow
+ * @param slope    extra bias for surfaces nearly edge-on to the light
+ */
+float shadowFactor(vec3 worldPos, vec3 n, float slope) {
+  if (uShadowStrength < 0.001) return 1.0;
+
+  // Normal offset: pushing the sample point along the surface normal removes
+  // almost all shadow acne without the peter-panning a large depth bias causes.
+  vec4 lightSpace = uLightViewProjection * vec4(worldPos + n * 0.55, 1.0);
+  vec3 proj = lightSpace.xyz / lightSpace.w;
+  proj = proj * 0.5 + 0.5;
+
+  // Outside the map, or beyond its far plane, means unshadowed.
+  if (proj.z > 1.0 ||
+      proj.x < 0.002 || proj.x > 0.998 ||
+      proj.y < 0.002 || proj.y > 0.998) {
+    return 1.0;
+  }
+
+  float bias = 0.0009 + slope * 0.0035;
+
+  // Four diagonal taps rather than a full 3x3. Visually equivalent once the
+  // normal offset is doing its job, at well under half the sample cost.
+  const vec2 taps[4] = vec2[4](
+    vec2(-0.7, -0.7), vec2(0.7, -0.7), vec2(-0.7, 0.7), vec2(0.7, 0.7)
+  );
+  float lit = 0.0;
+  for (int i = 0; i < 4; i++) {
+    float depth = texture(uShadowMap, proj.xy + taps[i] * uShadowTexel * 1.4).r;
+    lit += (proj.z - bias > depth) ? 0.0 : 1.0;
+  }
+  lit *= 0.25;
+
+  return mix(1.0, lit, uShadowStrength);
+}
+`;
+
+/* -------------------------------------------------------------- shadow pass */
+
+/** Depth-only pass from the sun's point of view. Supports instanced draws. */
+export const SHADOW_VERT = /* glsl */ `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 aPosition;
+layout(location = 4) in mat4 aInstanceMatrix;
+
+uniform mat4  uLightViewProjection;
+uniform mat4  uModel;
+uniform float uInstanced;
+
+void main() {
+  mat4 model = (uInstanced > 0.5) ? aInstanceMatrix : uModel;
+  gl_Position = uLightViewProjection * model * vec4(aPosition, 1.0);
+}`;
+
+export const SHADOW_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+// No colour attachment is bound; only depth is written.
+void main() {}`;
+
 /* ------------------------------------------------------------------ sky pass */
 
 export const SKY_FRAG = /* glsl */ `#version 300 es
@@ -315,6 +397,7 @@ ${COMMON}
 ${FRAME}
 ${SKY}
 ${FOG}
+${SHADOW}
 
 /** Small-scale ripple normal, layered on top of the Gerstner normal. */
 vec3 detailNormal(vec2 p, float fade) {
@@ -363,12 +446,20 @@ void main() {
   float fresnel = fresnelSchlick(facing, 0.021);
   vec3 col = mix(body, skyReflection, fresnel * 0.94);
 
+  // The vessel's cast shadow on the water. Sampled against the flat surface
+  // normal so wave detail does not punch holes in it.
+  float waterShadow = shadowFactor(vWorldPosition, vec3(0.0, 1.0, 0.0), 0.0);
+
+  // Shadowed water loses its specular entirely and darkens toward the deep
+  // colour, which is what actually happens in a hull's shadow.
+  col = mix(col * 0.62 + uDeepColor * 0.18, col, waterShadow);
+
   // Specular sun glitter.
   vec3 halfVector = normalize(uSunDirection + viewDir);
   float specular = pow(saturate(dot(n, halfVector)), 900.0);
   float sparkle = texture(uNoise, vWorldPosition.xz * 0.09 + uTime * 0.03).r;
-  col += uSunColor * specular * 5.5;
-  col += uSunColor * pow(saturate(dot(n, halfVector)), 90.0) * sparkle * detailFade * 0.9;
+  col += uSunColor * specular * 5.5 * waterShadow;
+  col += uSunColor * pow(saturate(dot(n, halfVector)), 90.0) * sparkle * detailFade * 0.9 * waterShadow;
 
   // Foam on the steepest crests, broken up by noise so it never looks banded.
   float foamNoise = texture(uNoise, vWorldPosition.xz * 0.028 + uTime * 0.012).r
@@ -428,12 +519,12 @@ void main() {
     col += uShallowColor * wake * 0.35;
   }
 
-  // Analytic contact shadow under the hull — far cheaper than a shadow map and
-  // enough to visually seat the vessel in the water.
+  // A faint occlusion term directly beneath the hull. The cast shadow above
+  // does the real work; this only accounts for the sky light the hull blocks.
   if (uShipShadow > 0.001) {
     vec2 d = vec2(local.x / halfBeam, local.y / halfLength);
-    float inside = 1.0 - smoothstep(0.55, 1.1, length(d));
-    col *= mix(1.0, 0.32, inside * uShipShadow);
+    float inside = 1.0 - smoothstep(0.7, 1.05, length(d));
+    col *= mix(1.0, 0.74, inside * uShipShadow);
   }
 
   col = applyFog(col, distance, -viewDir);
@@ -503,6 +594,14 @@ uniform sampler2D uAlbedoMap;
 uniform float uUseMap;
 uniform float uOpacity;
 
+// ---- Procedural surface detail -------------------------------------------
+// Flat painted surfaces are what make CG ships read as toys. These break them
+// up with plate seams, grime and rust without any texture assets.
+uniform sampler2D uNoise;
+uniform float uWeather;      // 0 = factory fresh, 1 = years at sea
+uniform float uPanelSize;    // metres between plate seams; 0 disables them
+uniform float uCorrugation;  // ribs per metre (container walls); 0 disables
+
 // Interior lighting. Sky/sun alone cannot light enclosed spaces, so the bridge,
 // engine room and cargo hold are lit by a handful of point lights instead.
 #define MAX_LIGHTS 6
@@ -526,10 +625,33 @@ ${COMMON}
 ${FRAME}
 ${SKY}
 ${FOG}
+${SHADOW}
+
+/**
+ * Samples the noise texture in world space by blending three axis-aligned
+ * projections, weighted by the surface normal. Gives coherent detail on
+ * arbitrary geometry with no UV mapping.
+ */
+float triplanarNoise(vec3 p, vec3 n, float scale) {
+  vec3 w = abs(n);
+  w /= max(w.x + w.y + w.z, 1e-4);
+  return texture(uNoise, p.yz * scale).r * w.x
+       + texture(uNoise, p.xz * scale).r * w.y
+       + texture(uNoise, p.xy * scale).r * w.z;
+}
+
+/** Picks the two world axes that lie in the plane of a surface. */
+vec2 planarCoords(vec3 p, vec3 n) {
+  vec3 w = abs(n);
+  if (w.y >= w.x && w.y >= w.z) return p.xz;
+  if (w.x >= w.z) return p.zy;
+  return p.xy;
+}
 
 void main() {
   vec3 albedo = mix(vColor, uTintColor, uTintAmount);
   float alpha = uOpacity;
+  float roughness = uRoughness;
 
   // uUseMap: 0 = untextured, 1 = alpha-blended decal, 2 = opaque texture.
   if (uUseMap > 0.5) {
@@ -545,6 +667,61 @@ void main() {
   vec3 n = normalize(vNormal);
   if (!gl_FrontFacing) n = -n;
 
+  // ---- Corrugation ---------------------------------------------------------
+  // Container side walls are ribbed. Perturbing the normal along the in-plane
+  // horizontal axis is enough to catch light like real corrugated steel.
+  if (uCorrugation > 0.0) {
+    vec3 w = abs(n);
+    float sideness = 1.0 - w.y;
+    float along = (w.x > w.z) ? vWorldPosition.z : vWorldPosition.x;
+    vec3 ribAxis = (w.x > w.z) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    float rib = sin(along * uCorrugation * TAU);
+    n = normalize(n + ribAxis * rib * 0.11 * sideness);
+  }
+
+  // ---- Weathering ----------------------------------------------------------
+  if (uWeather > 0.001) {
+    float broad = triplanarNoise(vWorldPosition, n, 0.032);
+    float fine = triplanarNoise(vWorldPosition, n, 0.21);
+
+    // Streaks: sampled with a compressed vertical axis so features elongate
+    // downward, the way water and rust actually run on a hull. The horizontal
+    // frequency is high so streaks stay narrow rather than becoming banners.
+    float streak = texture(uNoise, vec2(
+      vWorldPosition.x * 0.34 + vWorldPosition.z * 0.27,
+      vWorldPosition.y * 0.028
+    )).r;
+
+    // Upward-facing surfaces collect far more dirt than vertical ones.
+    float upFacing = saturate(n.y);
+
+    float dirt = (broad * 0.62 + fine * 0.26) * (0.4 + upFacing * 0.95);
+    dirt *= uWeather;
+
+    // Rust wants vertical faces, where it can run. Kept deliberately rare:
+    // a working hull has streaks, not flames.
+    float rust = smoothstep(0.80, 1.0, streak * (0.62 + broad * 0.55))
+               * (1.0 - upFacing * 0.8) * uWeather;
+
+    albedo *= 1.0 - saturate(dirt) * 0.30;
+    albedo = mix(albedo, vec3(0.20, 0.105, 0.062), saturate(rust) * 0.20);
+
+    // Grime scatters light, so dirty areas read rougher than clean paint.
+    roughness = saturate(roughness + saturate(dirt) * 0.26);
+  }
+
+  // ---- Plate seams ---------------------------------------------------------
+  if (uPanelSize > 0.01) {
+    vec2 uv = planarCoords(vWorldPosition, n) / uPanelSize;
+    vec2 cell = fract(uv);
+    vec2 toEdge = min(cell, 1.0 - cell);
+    float edge = min(toEdge.x, toEdge.y);
+    // Seam width is expressed in cell units, so it scales with panel size.
+    float seam = 1.0 - smoothstep(0.0, 0.022, edge);
+    albedo *= 1.0 - seam * 0.22;
+    roughness = saturate(roughness + seam * 0.25);
+  }
+
   // Hemispheric ambient sampled from the actual sky, which keeps every surface
   // colour-matched to the environment.
   vec3 skyUp = skyColor(vec3(0.0, 1.0, 0.0), 0.0);
@@ -556,20 +733,24 @@ void main() {
   // Sun with a soft wrap so shadowed sides never go fully black.
   float ndl = dot(n, uSunDirection);
   float wrapped = saturate((ndl + 0.28) / 1.28);
-  vec3 direct = uSunColor * wrapped * uSunlit;
+
+  // Real cast shadows. Without these the vessel reads as pasted onto the water
+  // rather than sitting in the light.
+  float shadow = shadowFactor(vWorldPosition, n, 1.0 - saturate(ndl));
+  vec3 direct = uSunColor * wrapped * uSunlit * shadow;
 
   // Blinn-Phong specular standing in for GGX — visually close at far less cost.
   vec3 halfVector = normalize(uSunDirection + viewDir);
-  float gloss = mix(6.0, 340.0, 1.0 - uRoughness);
+  float gloss = mix(6.0, 340.0, 1.0 - roughness);
   float specular = pow(saturate(dot(n, halfVector)), gloss)
-                 * mix(0.05, 1.0, 1.0 - uRoughness);
+                 * mix(0.05, 1.0, 1.0 - roughness);
 
   float f0 = mix(0.04, 0.9, uMetallic);
   float fresnel = fresnelSchlick(saturate(dot(n, viewDir)), f0);
 
   vec3 diffuse = albedo * (ambient * uAmbientOcclusion + direct * 0.85);
   vec3 spec = mix(uSunColor, uSunColor * albedo, uMetallic)
-            * specular * (0.35 + fresnel * 2.2) * uSunlit;
+            * specular * (0.35 + fresnel * 2.2) * uSunlit * shadow;
 
   // Point lights: inverse-square falloff with a smooth cutoff at the range so
   // fixtures never produce a hard circular edge on the geometry.
@@ -590,14 +771,14 @@ void main() {
 
     vec3 h = normalize(lightDir + viewDir);
     spec += radiance * pow(saturate(dot(n, h)), gloss)
-          * mix(0.05, 0.8, 1.0 - uRoughness);
+          * mix(0.05, 0.8, 1.0 - roughness);
   }
 
   // Sky reflection on glossy metal (rails, glass, painted steel).
   vec3 reflectDir = reflect(-viewDir, n);
-  vec3 envReflection = skyColor(reflectDir, uCloudAmount);
+  vec3 envReflection = skyColor(reflectDir, 0.0);
   vec3 col = diffuse + spec
-          + envReflection * fresnel * (1.0 - uRoughness) * 0.6 * uAmbientScale;
+          + envReflection * fresnel * (1.0 - roughness) * 0.6 * uAmbientScale;
 
   // Wet, darker plating below the waterline.
   if (uWaterlineAmount > 0.001) {
@@ -654,6 +835,19 @@ void main() {
     result += texture(uSource, vUV - step * offsets[i]).rgb * weights[i];
   }
   outColor = vec4(result, 1.0);
+}`;
+
+/** Debug view of the shadow map depth, used while validating the light setup. */
+export const SHADOW_DEBUG_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uShadowMap;
+out vec4 outColor;
+void main() {
+  float d = texture(uShadowMap, vUV).r;
+  // Depth sits close to 1.0 almost everywhere, so expand the useful range.
+  float v = pow(clamp(d, 0.0, 1.0), 12.0);
+  outColor = vec4(vec3(1.0 - v), 1.0);
 }`;
 
 /** Final composite: bloom, exposure, ACES, vignette, grain, sRGB. */

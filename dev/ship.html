@@ -83,6 +83,8 @@
         far: 12000,
       };
 
+      renderer.debugShadowMap = params.has('shadowmap');
+
       const TIME = 40;
 
       // Seat the vessel in the wave field.
@@ -95,6 +97,8 @@
         time: TIME,
         ocean,
         solids: ship.batches,
+        shadowFocus: [0, 10, 0],
+        shadowRadius: 210,
         vessel: {
           position: [0, 0, 0],
           heading: 0,
