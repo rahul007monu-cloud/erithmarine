@@ -2,9 +2,9 @@
   "name": "Edith Maritime Services",
   "short_name": "Edith Maritime",
   "description": "Crew management, technical and commercial ship management, and pre-sea guidance for seafarers and shipowners.",
-  "id": "/",
-  "start_url": "/",
-  "scope": "/",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#050b14",
@@ -13,13 +13,13 @@
   "dir": "ltr",
   "categories": ["business", "education"],
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "Current vacancies", "url": "/#careers" },
-    { "name": "Upload your CV", "url": "/#apply" },
-    { "name": "Contact us", "url": "/#contact" }
+    { "name": "Current vacancies", "url": "./#careers" },
+    { "name": "Upload your CV", "url": "./#apply" },
+    { "name": "Contact us", "url": "./#contact" }
   ]
 }

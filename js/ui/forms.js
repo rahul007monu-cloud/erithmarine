@@ -215,7 +215,7 @@ export function mountApplyForm() {
       const payload = new FormData(form);
       payload.set('reference', ref);
 
-      const response = await postOrNull('/api/apply', payload, true);
+      const response = await postOrNull('api/apply', payload, true);
 
       if (response === null) {
         // No backend reachable — hand the candidate a pre-filled email so the
@@ -309,7 +309,7 @@ export function mountContactForm() {
     button.disabled = true;
 
     try {
-      const response = await postOrNull('/api/contact', {
+      const response = await postOrNull('api/contact', {
         name: value('name'),
         email: value('email'),
         phone: value('phone'),

@@ -15,30 +15,30 @@ const CACHE_VERSION = 'ems-v1';
 const SHELL_CACHE = `${CACHE_VERSION}-shell`;
 
 const SHELL = [
-  '/',
-  '/index.html',
-  '/css/styles.css',
-  '/manifest.webmanifest',
-  '/js/main.js',
-  '/js/content.js',
-  '/js/ui/dom.js',
-  '/js/ui/render.js',
-  '/js/ui/jobs.js',
-  '/js/ui/forms.js',
-  '/js/ui/chat.js',
-  '/js/ui/pwa.js',
-  '/js/engine/math.js',
-  '/js/engine/gl.js',
-  '/js/engine/geometry.js',
-  '/js/scene/shaders.js',
-  '/js/scene/ocean.js',
-  '/js/scene/renderer.js',
-  '/js/scene/ship.js',
-  '/js/scene/interiors.js',
-  '/js/scene/journey.js',
-  '/icons/favicon.svg',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
+  './',
+  'index.html',
+  'css/styles.css',
+  'manifest.webmanifest',
+  'js/main.js',
+  'js/content.js',
+  'js/ui/dom.js',
+  'js/ui/render.js',
+  'js/ui/jobs.js',
+  'js/ui/forms.js',
+  'js/ui/chat.js',
+  'js/ui/pwa.js',
+  'js/engine/math.js',
+  'js/engine/gl.js',
+  'js/engine/geometry.js',
+  'js/scene/shaders.js',
+  'js/scene/ocean.js',
+  'js/scene/renderer.js',
+  'js/scene/ship.js',
+  'js/scene/interiors.js',
+  'js/scene/journey.js',
+  'icons/favicon.svg',
+  'icons/icon-192.png',
+  'icons/icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -48,7 +48,8 @@ self.addEventListener('install', (event) => {
     // individually and tolerate gaps (for example a missing icon).
     await Promise.all(SHELL.map(async (url) => {
       try {
-        await cache.add(new Request(url, { cache: 'reload' }));
+        const absolute = new URL(url, self.registration.scope).href;
+        await cache.add(new Request(absolute, { cache: 'reload' }));
       } catch (error) {
         console.warn('[sw] could not precache', url, error);
       }
@@ -74,7 +75,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api/')) return;
+  if (url.pathname.includes('/api/')) return;
 
   // Navigations: try the network, fall back to the cached shell offline.
   if (request.mode === 'navigate') {
@@ -83,7 +84,8 @@ self.addEventListener('fetch', (event) => {
         return await fetch(request);
       } catch {
         const cache = await caches.open(SHELL_CACHE);
-        return (await cache.match('/index.html')) || Response.error();
+        const shellUrl = new URL('index.html', self.registration.scope).href;
+        return (await cache.match(shellUrl)) || Response.error();
       }
     })());
     return;

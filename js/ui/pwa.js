@@ -10,7 +10,10 @@ export function registerServiceWorker() {
   if (location.protocol !== 'https:' && location.hostname !== 'localhost') return;
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((error) => {
+    // Registered relative to the page so the worker scope follows the deploy
+    // path. On GitHub Pages that is /<repo>/, not the domain root.
+    const swUrl = new URL('sw.js', document.baseURI).href;
+    navigator.serviceWorker.register(swUrl).catch((error) => {
       console.warn('[pwa] service worker registration failed', error);
     });
   });
