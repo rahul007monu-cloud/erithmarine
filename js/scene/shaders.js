@@ -706,30 +706,55 @@ void main() {
   vec3 n = normalize(vNormal);
   if (!gl_FrontFacing) n = -n;
 
+  /*
+   * How much world space one pixel covers here. Procedural detail finer than
+   * this cannot be sampled and turns into moiré, so every pattern below fades
+   * out once it crosses that threshold. This is the same reasoning as a mip
+   * chain, done analytically because the patterns are generated rather than
+   * sampled from a texture.
+   */
+  float worldPixel = fwidth(vWorldPosition.x)
+                   + fwidth(vWorldPosition.y)
+                   + fwidth(vWorldPosition.z);
+
   // ---- Corrugation ---------------------------------------------------------
   // Container side walls are ribbed. Perturbing the normal along the in-plane
   // horizontal axis is enough to catch light like real corrugated steel.
   if (uCorrugation > 0.0) {
-    vec3 w = abs(n);
-    float sideness = 1.0 - w.y;
-    float along = (w.x > w.z) ? vWorldPosition.z : vWorldPosition.x;
-    vec3 ribAxis = (w.x > w.z) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-    float rib = sin(along * uCorrugation * TAU);
-    n = normalize(n + ribAxis * rib * 0.11 * sideness);
+    float ribPeriod = 1.0 / max(uCorrugation, 1e-4);
+    // Ribs sit about 12 cm apart, so they vanish well before the horizon.
+    float ribFade = 1.0 - smoothstep(ribPeriod * 0.35, ribPeriod * 1.1, worldPixel);
+
+    if (ribFade > 0.001) {
+      vec3 w = abs(n);
+      float sideness = 1.0 - w.y;
+      float along = (w.x > w.z) ? vWorldPosition.z : vWorldPosition.x;
+      vec3 ribAxis = (w.x > w.z) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+      float rib = sin(along * uCorrugation * TAU);
+      n = normalize(n + ribAxis * rib * 0.11 * sideness * ribFade);
+    }
   }
 
   // ---- Weathering ----------------------------------------------------------
   if (uWeather > 0.001) {
     float broad = triplanarNoise(vWorldPosition, n, 0.032);
-    float fine = triplanarNoise(vWorldPosition, n, 0.21);
+    // The fine octave has a ~5 m period; drop it once a pixel is that wide,
+    // otherwise it sparkles instead of reading as grain.
+    float fineFade = 1.0 - smoothstep(1.2, 4.5, worldPixel);
+    float fine = fineFade > 0.001
+      ? triplanarNoise(vWorldPosition, n, 0.21) * fineFade
+      : 0.0;
 
     // Streaks: sampled with a compressed vertical axis so features elongate
     // downward, the way water and rust actually run on a hull. The horizontal
     // frequency is high so streaks stay narrow rather than becoming banners.
-    float streak = texture(uNoise, vec2(
-      vWorldPosition.x * 0.34 + vWorldPosition.z * 0.27,
-      vWorldPosition.y * 0.028
-    )).r;
+    float streakFade = 1.0 - smoothstep(0.8, 3.2, worldPixel);
+    float streak = streakFade > 0.001
+      ? texture(uNoise, vec2(
+          vWorldPosition.x * 0.34 + vWorldPosition.z * 0.27,
+          vWorldPosition.y * 0.028
+        )).r
+      : 0.5;
 
     // Upward-facing surfaces collect far more dirt than vertical ones.
     float upFacing = saturate(n.y);
@@ -740,7 +765,7 @@ void main() {
     // Rust wants vertical faces, where it can run. Kept deliberately rare:
     // a working hull has streaks, not flames.
     float rust = smoothstep(0.80, 1.0, streak * (0.62 + broad * 0.55))
-               * (1.0 - upFacing * 0.8) * uWeather;
+               * (1.0 - upFacing * 0.8) * uWeather * streakFade;
 
     albedo *= 1.0 - saturate(dirt) * 0.30;
     albedo = mix(albedo, vec3(0.20, 0.105, 0.062), saturate(rust) * 0.20);
@@ -751,14 +776,20 @@ void main() {
 
   // ---- Plate seams ---------------------------------------------------------
   if (uPanelSize > 0.01) {
-    vec2 uv = planarCoords(vWorldPosition, n) / uPanelSize;
-    vec2 cell = fract(uv);
-    vec2 toEdge = min(cell, 1.0 - cell);
-    float edge = min(toEdge.x, toEdge.y);
-    // Seam width is expressed in cell units, so it scales with panel size.
-    float seam = 1.0 - smoothstep(0.0, 0.022, edge);
-    albedo *= 1.0 - seam * 0.22;
-    roughness = saturate(roughness + seam * 0.25);
+    // A seam is a thin line, so its feature size is a small fraction of the
+    // panel. Fade it once a pixel is wider than the line itself.
+    float seamWidthWorld = uPanelSize * 0.022;
+    float seamFade = 1.0 - smoothstep(seamWidthWorld * 0.8, seamWidthWorld * 3.0, worldPixel);
+
+    if (seamFade > 0.001) {
+      vec2 uv = planarCoords(vWorldPosition, n) / uPanelSize;
+      vec2 cell = fract(uv);
+      vec2 toEdge = min(cell, 1.0 - cell);
+      float edge = min(toEdge.x, toEdge.y);
+      float seam = (1.0 - smoothstep(0.0, 0.022, edge)) * seamFade;
+      albedo *= 1.0 - seam * 0.22;
+      roughness = saturate(roughness + seam * 0.25);
+    }
   }
 
   // Hemispheric ambient sampled from the actual sky, which keeps every surface

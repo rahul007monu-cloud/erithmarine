@@ -512,20 +512,23 @@ const CONTAINER = { length: 12.19, width: 2.44, height: 2.59 };
  * random palette is what makes CG container stacks look like confectionery.
  */
 const CONTAINER_COLORS = [
-  [0.34, 0.11, 0.09],   // oxide red
-  [0.34, 0.11, 0.09],
-  [0.34, 0.11, 0.09],
-  [0.09, 0.20, 0.34],   // deep blue
-  [0.09, 0.20, 0.34],
-  [0.09, 0.20, 0.34],
-  [0.28, 0.29, 0.30],   // weathered grey
-  [0.28, 0.29, 0.30],
-  [0.13, 0.26, 0.20],   // green
-  [0.13, 0.26, 0.20],
-  [0.40, 0.26, 0.09],   // ochre
-  [0.44, 0.28, 0.10],   // orange
-  [0.24, 0.25, 0.31],   // slate
-  [0.055, 0.085, 0.14], // company navy
+  [0.150, 0.062, 0.052],  // oxide red, the most common livery
+  [0.150, 0.062, 0.052],
+  [0.150, 0.062, 0.052],
+  [0.135, 0.058, 0.048],
+  [0.052, 0.088, 0.140],  // faded blue
+  [0.052, 0.088, 0.140],
+  [0.052, 0.088, 0.140],
+  [0.060, 0.096, 0.150],
+  [0.135, 0.140, 0.146],  // weathered grey
+  [0.135, 0.140, 0.146],
+  [0.120, 0.126, 0.132],
+  [0.068, 0.112, 0.090],  // green
+  [0.068, 0.112, 0.090],
+  [0.170, 0.115, 0.048],  // ochre
+  [0.185, 0.108, 0.040],  // orange, deliberately rare
+  [0.112, 0.116, 0.140],  // slate
+  [0.040, 0.058, 0.092],  // company navy
 ];
 
 /**
@@ -585,7 +588,7 @@ function buildContainerInstances() {
         const color = CONTAINER_COLORS[(random() * CONTAINER_COLORS.length) | 0];
         // Slight per-box brightness variation so identical colours still read
         // as separate containers.
-        const shade = 0.90 + random() * 0.18;
+        const shade = 0.86 + random() * 0.26;
         colors.push(color[0] * shade, color[1] * shade, color[2] * shade);
       }
     }
@@ -686,8 +689,10 @@ export function createShip(gl) {
       model,
       instanced: true,
       material: {
-        roughness: 0.70, metallic: 0.04, ambientOcclusion: 0.9,
-        weather: 0.72, corrugation: 8.2,
+        roughness: 0.78, metallic: 0.03, ambientOcclusion: 0.82,
+        // Boxes that have crossed oceans for years: heavily streaked, with
+        // corrugated side walls and door-end seams.
+        weather: 1.0, corrugation: 8.2,
       },
     },
     {
