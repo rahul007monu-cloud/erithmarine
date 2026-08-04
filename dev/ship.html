@@ -1,0 +1,148 @@
+<!doctype html>
+<!-- Dev preview: the vessel on the ocean from several bearings. Not shipped. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>pending</title>
+  <style>
+    html, body { margin: 0; background: #000; height: 100%; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    #err {
+      position: fixed; inset: 0; padding: 24px; color: #ff9a9a;
+      font: 12px/1.55 ui-monospace, monospace; white-space: pre-wrap;
+      background: rgba(0,0,0,.9); display: none; overflow: auto; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <pre id="err"></pre>
+
+  <script type="module">
+    window.__errors = [];
+    window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+    window.addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
+
+    import { vec3, mat4, DEG } from '../js/engine/math.js';
+    import { createContext } from '../js/engine/gl.js';
+    import { createOcean } from '../js/scene/ocean.js';
+    import { Renderer } from '../js/scene/renderer.js';
+    import { createShip, shipPose, applyShipPose, SHIP } from '../js/scene/ship.js';
+
+    const show = (msg) => {
+      const el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent = msg;
+      document.title = 'SHIP_FAIL: ' + msg.split('\n')[0];
+    };
+
+    try {
+      const canvas = document.getElementById('c');
+      const gl = createContext(canvas, { preserveDrawingBuffer: true });
+      if (!gl) throw new Error('no webgl2');
+
+      const renderer = new Renderer(gl, canvas);
+      const ocean = createOcean(gl);
+      const ship = createShip(gl);
+
+      const W = Math.min(window.innerWidth, 1600);
+      const H = Math.min(window.innerHeight, 900);
+      renderer.resize(W, H);
+
+      /**
+       * Camera presets expressed as a *view bearing* rather than a raw position,
+       * because the bearing relative to the sun is what decides whether the shot
+       * is rich or washed out. Sun azimuth is 24 deg, so bearings around 130 deg
+       * put the sun off the port bow and keep the sky deep.
+       */
+      const VIEWS = {
+        hero:      { bearing: 132, distance: 560, height: 120, target: [0, 30, 6], fov: 38 },
+        broadside: { bearing: 200, distance: 620, height: 55,  target: [0, 32, 0], fov: 40 },
+        house:     { bearing: 150, distance: 210, height: 70,  target: [0, 38, -100], fov: 44 },
+        bow:       { bearing: 96,  distance: 260, height: 30,  target: [0, 26, 118], fov: 46 },
+        top:       { bearing: 140, distance: 400, height: 330, target: [0, 20, 6], fov: 46 },
+        deck:      { bearing: 4,   distance: 6,   height: 34,  target: [0, 30, 120], fov: 64 },
+      };
+
+      const params = new URLSearchParams(location.search);
+      const viewName = params.get('view') || 'hero';
+      const v = VIEWS[viewName] || VIEWS.hero;
+
+      // Place the camera behind the target along the chosen bearing.
+      const bearing = v.bearing * DEG;
+      const forward = [Math.cos(bearing), Math.sin(bearing)];
+      const camera = {
+        position: vec3.create(
+          v.target[0] - forward[0] * v.distance,
+          v.height,
+          v.target[2] - forward[1] * v.distance,
+        ),
+        target: vec3.create(v.target[0], v.target[1], v.target[2]),
+        fov: v.fov,
+        near: 0.5,
+        far: 12000,
+      };
+
+      const TIME = 40;
+
+      // Seat the vessel in the wave field.
+      const pose = shipPose(TIME, renderer.environment.waveScale);
+      applyShipPose(ship.model, pose);
+
+      const t0 = performance.now();
+      renderer.render({
+        camera,
+        time: TIME,
+        ocean,
+        solids: ship.batches,
+        vessel: {
+          position: [0, 0, 0],
+          heading: 0,
+          halfBeam: SHIP.beam / 2,
+          halfLength: SHIP.loa / 2,
+          shadow: 0.85,
+          wake: 1.0,
+        },
+      });
+      const renderMs = performance.now() - t0;
+
+      // Winding sanity check: a vertex on the starboard shell amidships must
+      // have an outward (+X) normal. If this reports BAD, loft() is producing an
+      // inside-out hull and the lighting will be meaningless.
+      const skin = ship.debugHullSkin;
+      let windingReport = 'n/a';
+      if (skin) {
+        let checked = 0;
+        let outward = 0;
+        for (let i = 0; i < skin.positions.length; i += 3) {
+          const x = skin.positions[i];
+          const y = skin.positions[i + 1];
+          const z = skin.positions[i + 2];
+          // Amidships, on the vertical part of the starboard side.
+          if (x > 18 && y > 2 && y < 9 && Math.abs(z) < 40) {
+            checked++;
+            if (skin.normals[i] > 0.5) outward++;
+          }
+        }
+        windingReport = checked === 0
+          ? 'nosamples'
+          : (outward === checked ? 'GOOD' : `BAD(${outward}/${checked})`);
+      }
+
+      const err = gl.getError();
+      document.title = [
+        err === gl.NO_ERROR ? 'SHIP_OK' : 'SHIP_FAIL',
+        'view:' + viewName,
+        'winding:' + windingReport,
+        'containers:' + ship.containerCount,
+        'tris:' + Math.round(ship.triangleCount / 1000) + 'k',
+        'ms:' + renderMs.toFixed(0),
+        'pose:y' + pose.y.toFixed(2) + ' p' + (pose.pitch / DEG).toFixed(2) + ' r' + (pose.roll / DEG).toFixed(2),
+        'glerr:0x' + err.toString(16),
+      ].join(' ');
+    } catch (e) {
+      show((e && e.message ? e.message : String(e)) + '\n\n' + (e && e.stack ? e.stack : ''));
+    }
+  </script>
+</body>
+</html>

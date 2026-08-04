@@ -1,0 +1,116 @@
+<!doctype html>
+<!-- Dev preview: sky + ocean only, fixed cinematic camera. Not shipped. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>pending</title>
+  <style>
+    html, body { margin: 0; background: #000; height: 100%; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    #err {
+      position: fixed; inset: 0; padding: 24px; color: #ff9a9a;
+      font: 12px/1.55 ui-monospace, monospace; white-space: pre-wrap;
+      background: rgba(0,0,0,.9); display: none; overflow: auto; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <pre id="err"></pre>
+
+  <script type="module">
+    window.__errors = [];
+    window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+    window.addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
+
+    import { vec3 } from '../js/engine/math.js';
+    import { createContext } from '../js/engine/gl.js';
+    import { createOcean, oceanHeight, AMPLITUDE_SUM } from '../js/scene/ocean.js';
+    import { Renderer } from '../js/scene/renderer.js';
+
+    const show = (msg) => {
+      const el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent = msg;
+      document.title = 'OCEAN_FAIL: ' + msg.split('\n')[0];
+    };
+
+    try {
+      const canvas = document.getElementById('c');
+      // preserveDrawingBuffer lets us render exactly one deterministic frame and
+      // still capture it — the software rasteriser here is far too slow to keep
+      // a live rAF loop running while CDP takes a screenshot.
+      const gl = createContext(canvas, { preserveDrawingBuffer: true });
+      if (!gl) throw new Error('no webgl2');
+
+      const renderer = new Renderer(gl, canvas);
+      const ocean = createOcean(gl);
+
+      const W = Math.min(window.innerWidth, 1600);
+      const H = Math.min(window.innerHeight, 900);
+      renderer.resize(W, H);
+
+      // Sun azimuth is 24°. Looking straight into it washes everything out, so
+      // compare several bearings relative to the sun.
+      const VIEWS = {
+        // Straight into the sun — hazy, high-key.
+        sun:    { bearing: 24,  height: 16, pitch: 0.02, fov: 42 },
+        // Roughly 110° off the sun — deep sky, saturated water, side glitter.
+        across: { bearing: 134, height: 18, pitch: 0.03, fov: 42 },
+        // Directly away from the sun — darkest, most saturated.
+        away:   { bearing: 204, height: 18, pitch: 0.03, fov: 42 },
+        // Higher vantage, as when the camera pulls back above the vessel.
+        high:   { bearing: 110, height: 90, pitch: -0.18, fov: 46 },
+      };
+
+      const params = new URLSearchParams(location.search);
+      const viewName = params.get('view') || 'across';
+      const view = VIEWS[viewName] || VIEWS.across;
+
+      const bearingRad = view.bearing * Math.PI / 180;
+      const forward = vec3.create(
+        Math.cos(bearingRad), view.pitch, Math.sin(bearingRad),
+      );
+      const camera = {
+        position: vec3.create(0, view.height, 0),
+        target: vec3.create(
+          forward[0] * 1200,
+          view.height + view.pitch * 1200,
+          forward[2] * 1200,
+        ),
+        fov: view.fov,
+        near: 0.5,
+        far: 12000,
+      };
+
+      // Render a single frame at a fixed time so results are reproducible.
+      const TIME = 40;
+      const t0 = performance.now();
+      renderer.render({ camera, time: TIME, ocean });
+      const renderMs = performance.now() - t0;
+
+      // Exposed so a screenshot run can re-render at another time if needed.
+      window.__renderAt = (t) => renderer.render({ camera, time: t, ocean });
+
+      // Sanity-check the CPU sampler agrees with the wave definition.
+      const h0 = oceanHeight(0, 0, 12);
+      const h1 = oceanHeight(37, -14, 12);
+      const withinRange = Math.abs(h0) <= AMPLITUDE_SUM + 0.01
+                       && Math.abs(h1) <= AMPLITUDE_SUM + 0.01;
+
+      const err = gl.getError();
+      document.title = [
+        err === gl.NO_ERROR && withinRange ? 'OCEAN_OK' : 'OCEAN_FAIL',
+        'view:' + viewName,
+        'verts:' + ocean.vertexCount,
+        'ms:' + renderMs.toFixed(0),
+        'ampSum:' + AMPLITUDE_SUM.toFixed(2),
+        'h:' + h0.toFixed(2) + '/' + h1.toFixed(2),
+        'glerr:0x' + err.toString(16),
+      ].join(' ');
+    } catch (e) {
+      show((e && e.message ? e.message : String(e)) + '\n\n' + (e && e.stack ? e.stack : ''));
+    }
+  </script>
+</body>
+</html>
