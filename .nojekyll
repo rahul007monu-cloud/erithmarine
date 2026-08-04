@@ -1,0 +1,7 @@
+This file disables Jekyll processing on GitHub Pages.
+
+The site is plain static files that need to be served exactly as committed.
+Without this marker, GitHub Pages runs the repository through Jekyll, which
+skips any path beginning with an underscore and can rewrite files it mistakes
+for templates. Neither is wanted here, and skipping Jekyll also makes the
+deploy noticeably faster.
