@@ -20,6 +20,8 @@ import {
   FULLSCREEN_VERT,
 } from '../engine/gl.js';
 import {
+  SSAO_FRAG,
+  AO_BLUR_FRAG,
   SHADOW_VERT,
   SHADOW_FRAG,
   SHADOW_DEBUG_FRAG,
@@ -104,6 +106,8 @@ export class Renderer {
       composite: new Program(gl, FULLSCREEN_VERT, COMPOSITE_FRAG, 'composite'),
       shadow: new Program(gl, SHADOW_VERT, SHADOW_FRAG, 'shadow'),
       shadowDebug: new Program(gl, FULLSCREEN_VERT, SHADOW_DEBUG_FRAG, 'shadowDebug'),
+      ssao: new Program(gl, FULLSCREEN_VERT, SSAO_FRAG, 'ssao'),
+      aoBlur: new Program(gl, FULLSCREEN_VERT, AO_BLUR_FRAG, 'aoBlur'),
     };
 
     this.environment = { ...GOLDEN_HOUR };
@@ -166,6 +170,15 @@ export class Renderer {
     this._reflectionView = mat4.create();
     this._reflectionViewProjection = mat4.create();
     this._resolution = new Float32Array(2);
+    this._aoResolution = new Float32Array(2);
+    this._aoTexel = new Float32Array(2);
+    this._inverseProjection = mat4.create();
+
+    // Ambient occlusion. Half resolution and blurred, which is standard: the
+    // signal is low frequency and noisy by construction.
+    this.aoScale = 0.5;
+    this.aoStrength = 0.85;
+    this.aoRadius = 0.85;     // metres; interiors are the reason this is small
 
     this.targets = null;
     this.width = 0;
@@ -226,13 +239,17 @@ export class Renderer {
       this.targets.bloomA.dispose();
       this.targets.bloomB.dispose();
       this.targets.reflection.dispose();
+      this.targets.aoA.dispose();
+      this.targets.aoB.dispose();
     }
 
     const bloomWidth = Math.max(2, Math.floor(width / 4));
     const bloomHeight = Math.max(2, Math.floor(height / 4));
+    const aoWidth = Math.max(2, Math.floor(width * this.aoScale));
+    const aoHeight = Math.max(2, Math.floor(height * this.aoScale));
 
     this.targets = {
-      scene: createFramebuffer(gl, width, height, { depth: true, float: true }),
+      scene: createFramebuffer(gl, width, height, { depth: true, float: true, depthTexture: true }),
       bloomA: createFramebuffer(gl, bloomWidth, bloomHeight, { depth: false, float: true }),
       bloomB: createFramebuffer(gl, bloomWidth, bloomHeight, { depth: false, float: true }),
       reflection: createFramebuffer(
@@ -241,6 +258,8 @@ export class Renderer {
         Math.max(2, Math.floor(height * this.reflectionScale)),
         { depth: true, float: true },
       ),
+      aoA: createFramebuffer(gl, aoWidth, aoHeight, { depth: false, float: false }),
+      aoB: createFramebuffer(gl, aoWidth, aoHeight, { depth: false, float: false }),
     };
 
     this.canvas.width = width;
@@ -630,11 +649,45 @@ export class Renderer {
       this._drawSolids(program, solids, true);
     }
 
-    // ------------------------------------------------------------ bloom chain
+    // ------------------------------------------------------- post-processing
     gl.disable(gl.DEPTH_TEST);
     gl.depthMask(false);
 
-    const { scene, bloomA, bloomB } = this.targets;
+    const { scene, bloomA, bloomB, aoA, aoB } = this.targets;
+
+    // ---- ambient occlusion --------------------------------------------------
+    // Reads the scene depth attachment, so it must run before anything rebinds
+    // that texture.
+    const wantsAO = this.aoStrength > 0.001 && scene.depth;
+
+    if (wantsAO) {
+      mat4.invert(this._inverseProjection, this._projection);
+      this._aoResolution[0] = aoA.width;
+      this._aoResolution[1] = aoA.height;
+
+      aoA.bind();
+      this.programs.ssao.use()
+        .setTexture('uDepth', scene.depth, 0)
+        .setAll({
+          uInverseProjection: this._inverseProjection,
+          uProjection: this._projection,
+          uResolution: this._aoResolution,
+          uRadius: this.aoRadius,
+          uStrength: 1.0,
+          uBias: 0.02,
+        });
+      drawFullscreen(gl);
+
+      // The kernel is rotated per pixel, so the raw result is noise. Blur it.
+      this._aoTexel[0] = 1 / aoA.width;
+      this._aoTexel[1] = 1 / aoA.height;
+
+      aoB.bind();
+      this.programs.aoBlur.use()
+        .setTexture('uSource', aoA.color, 0)
+        .setAll({ uTexelSize: this._aoTexel });
+      drawFullscreen(gl);
+    }
 
     bloomA.bind();
     this.programs.bright.use()
@@ -673,7 +726,9 @@ export class Renderer {
     this.programs.composite.use()
       .setTexture('uScene', scene.color, 0)
       .setTexture('uBloom', bloomA.color, 1)
+      .setTexture('uAmbientOcclusion', wantsAO ? aoB.color : scene.color, 2)
       .setAll({
+        uAOStrength: wantsAO ? this.aoStrength : 0,
         uBloomStrength: env.bloomStrength,
         uExposure: env.exposure,
         uVignette: env.vignette,
@@ -696,6 +751,8 @@ export class Renderer {
       this.targets.bloomA.dispose();
       this.targets.bloomB.dispose();
       this.targets.reflection.dispose();
+      this.targets.aoA.dispose();
+      this.targets.aoB.dispose();
     }
   }
 }

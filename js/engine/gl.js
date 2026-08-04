@@ -484,7 +484,28 @@ export function createFramebuffer(gl, width, height, options = {}) {
   );
 
   let depthBuffer = null;
-  if (depth) {
+  let depthTexture = null;
+
+  if (depth && options.depthTexture) {
+    // A sampleable depth attachment, needed by effects that read scene depth
+    // (ambient occlusion). A renderbuffer would be marginally cheaper but
+    // cannot be bound as a texture.
+    depthTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
+    gl.texImage2D(
+      gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, width, height, 0,
+      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null,
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+
+    gl.framebufferTexture2D(
+      gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTexture, 0,
+    );
+  } else if (depth) {
     depthBuffer = gl.createRenderbuffer();
     gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer);
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, width, height);
@@ -504,6 +525,10 @@ export function createFramebuffer(gl, width, height, options = {}) {
     fbo,
     color,
     depthBuffer,
+    // Present only when `depthTexture: true` was requested.
+    depth: depthTexture
+      ? { handle: depthTexture, target: gl.TEXTURE_2D, width, height }
+      : null,
     width,
     height,
     bind() {
@@ -514,6 +539,7 @@ export function createFramebuffer(gl, width, height, options = {}) {
       gl.deleteFramebuffer(fbo);
       gl.deleteTexture(color.handle);
       if (depthBuffer) gl.deleteRenderbuffer(depthBuffer);
+      if (depthTexture) gl.deleteTexture(depthTexture);
     },
   };
 }

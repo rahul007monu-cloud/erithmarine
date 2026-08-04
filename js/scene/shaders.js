@@ -907,6 +907,124 @@ void main() {
   outColor = vec4(result, 1.0);
 }`;
 
+/**
+ * Screen-space ambient occlusion.
+ *
+ * Without contact darkening, every surface meets every other surface at full
+ * brightness and nothing looks seated in its surroundings — the single biggest
+ * reason the interiors read as boxes rather than rooms.
+ *
+ * View-space position is reconstructed from depth, and the normal from its
+ * screen-space derivatives, so no separate normal buffer is needed. Occlusion is
+ * then estimated by sampling a hemisphere around each point.
+ */
+export const SSAO_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+
+in vec2 vUV;
+
+uniform sampler2D uDepth;
+uniform mat4  uInverseProjection;
+uniform mat4  uProjection;
+uniform vec2  uResolution;
+uniform float uRadius;      // world-space sampling radius, metres
+uniform float uStrength;
+uniform float uBias;
+
+out vec4 outColor;
+
+${COMMON}
+
+/** Depth buffer value to view-space position. */
+vec3 viewPosition(vec2 uv) {
+  float depth = texture(uDepth, uv).r;
+  vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+  vec4 view = uInverseProjection * clip;
+  return view.xyz / view.w;
+}
+
+void main() {
+  float depth = texture(uDepth, vUV).r;
+
+  // Nothing was drawn here (sky, or cleared background).
+  if (depth >= 0.9999) {
+    outColor = vec4(1.0);
+    return;
+  }
+
+  vec3 origin = viewPosition(vUV);
+
+  // Normal from the derivatives of the reconstructed position. Cheaper than a
+  // dedicated normal target and accurate enough for an occlusion estimate.
+  vec3 normal = normalize(cross(dFdx(origin), dFdy(origin)));
+  if (normal.z < 0.0) normal = -normal;
+
+  // Rotate the kernel per pixel so banding becomes noise, which the blur pass
+  // then resolves.
+  float angle = hash12(vUV * uResolution) * TAU;
+  float ca = cos(angle);
+  float sa = sin(angle);
+
+  // A fixed hemisphere kernel, weighted toward the origin so nearby geometry
+  // contributes most.
+  const vec3 kernel[12] = vec3[12](
+    vec3( 0.5381,  0.1856,  0.4319), vec3( 0.1379,  0.2486,  0.4430),
+    vec3( 0.3371,  0.5679,  0.0057), vec3(-0.6999, -0.0451,  0.0019),
+    vec3( 0.0689, -0.1598,  0.8547), vec3( 0.0560,  0.0069,  0.1843),
+    vec3(-0.0146,  0.1402,  0.0762), vec3( 0.0100, -0.1924,  0.0344),
+    vec3(-0.3577, -0.5301,  0.4358), vec3(-0.3169,  0.1063,  0.0158),
+    vec3( 0.0103, -0.5869,  0.0046), vec3(-0.0897, -0.4940,  0.3287)
+  );
+
+  float occlusion = 0.0;
+
+  for (int i = 0; i < 12; i++) {
+    vec3 s = kernel[i];
+    // Per-pixel rotation about the view axis.
+    vec3 rotated = vec3(s.x * ca - s.y * sa, s.x * sa + s.y * ca, s.z);
+    // Flip any sample that ended up below the surface.
+    if (dot(rotated, normal) < 0.0) rotated = -rotated;
+
+    vec3 samplePos = origin + rotated * uRadius;
+
+    // Project back to screen space to look up the recorded depth there.
+    vec4 offset = uProjection * vec4(samplePos, 1.0);
+    if (offset.w <= 0.0) continue;
+    vec2 sampleUV = (offset.xy / offset.w) * 0.5 + 0.5;
+    if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) continue;
+
+    float sceneDepth = viewPosition(sampleUV).z;
+
+    // Occluded when real geometry sits in front of the sample point.
+    float delta = sceneDepth - samplePos.z;
+    if (delta > uBias) {
+      // Range check stops distant geometry haloing across depth discontinuities.
+      occlusion += smoothstep(0.0, 1.0, uRadius / max(abs(delta), 1e-4));
+    }
+  }
+
+  occlusion = 1.0 - (occlusion / 12.0) * uStrength;
+  outColor = vec4(saturate(occlusion));
+}`;
+
+/** Cross-shaped blur for the occlusion buffer, which is noisy by construction. */
+export const AO_BLUR_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uSource;
+uniform vec2 uTexelSize;
+out vec4 outColor;
+
+void main() {
+  float total = 0.0;
+  for (int y = -2; y <= 2; y++) {
+    for (int x = -2; x <= 2; x++) {
+      total += texture(uSource, vUV + vec2(float(x), float(y)) * uTexelSize).r;
+    }
+  }
+  outColor = vec4(total / 25.0);
+}`;
+
 /** Debug view of the shadow map depth, used while validating the light setup. */
 export const SHADOW_DEBUG_FRAG = /* glsl */ `#version 300 es
 precision highp float;
@@ -927,6 +1045,8 @@ in vec2 vUV;
 
 uniform sampler2D uScene;
 uniform sampler2D uBloom;
+uniform sampler2D uAmbientOcclusion;
+uniform float uAOStrength;
 uniform float uBloomStrength;
 uniform float uExposure;
 uniform float uVignette;
@@ -941,6 +1061,13 @@ ${COMMON}
 void main() {
   vec3 scene = texture(uScene, vUV).rgb;
   vec3 bloom = texture(uBloom, vUV).rgb;
+
+  // Ambient occlusion is applied before bloom, so bright highlights still
+  // bleed out of creases rather than being darkened along with them.
+  if (uAOStrength > 0.001) {
+    float ao = texture(uAmbientOcclusion, vUV).r;
+    scene *= mix(1.0, ao, uAOStrength);
+  }
 
   vec3 col = scene + bloom * uBloomStrength;
   col *= uExposure;
