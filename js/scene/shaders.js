@@ -391,6 +391,7 @@ uniform vec2  uShipExtent;    // half-beam, half-length
 uniform float uShipShadow;    // 0..1
 uniform float uShipWake;      // 0..1
 
+
 out vec4 outColor;
 
 ${COMMON}
@@ -434,6 +435,7 @@ void main() {
   reflectDir.y = abs(reflectDir.y) * 0.92 + 0.02;
 
   vec3 skyReflection = skyColor(reflectDir, uCloudAmount);
+
 
   // Water body colour: deep where we look straight down, brighter at grazing
   // angles, with a touch of forward scattering through wave crests.

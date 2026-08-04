@@ -161,11 +161,13 @@ html.no-3d .scene-fallback { display: block; }
   padding: 0.85rem var(--pad);
   padding-left: max(var(--pad), calc(var(--rail) + 0.4rem));
   background: linear-gradient(180deg, rgba(4, 9, 16, 0.86), rgba(4, 9, 16, 0));
+  backdrop-filter: blur(9px);
+  -webkit-backdrop-filter: blur(9px);
   transition: background 0.4s var(--ease);
 }
 
 .topbar.is-condensed {
-  background: rgba(6, 14, 25, 0.94);
+  background: var(--glass-strong);
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -304,10 +306,6 @@ html.no-3d .scene-fallback { display: block; }
   visibility: hidden;
   pointer-events: none;
   transition: visibility 0.3s;
-  /* Opacity and transform are written every frame from main.js; keeping these
-     on the compositor avoids a layout pass per scroll event. */
-  will-change: opacity, transform;
-  contain: layout paint;
 }
 
 .panel.is-visible { visibility: visible; pointer-events: auto; }
@@ -353,10 +351,8 @@ html.no-3d .panel:not(.panel--hero)::before { display: none; }
   background: var(--glass);
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
-  /* Kept modest on purpose: backdrop-filter over a live WebGL canvas is
-     extremely expensive, and a large radius is what made scrolling stutter. */
-  backdrop-filter: blur(9px) saturate(1.12);
-  -webkit-backdrop-filter: blur(9px) saturate(1.12);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
   box-shadow: var(--shadow-lg);
 }
 
@@ -528,9 +524,11 @@ h3 { font-size: 1rem; font-weight: 600; letter-spacing: 0.01em; }
 .card {
   position: relative;
   padding: 1.25rem;
-  background: rgba(9, 20, 34, 0.86);
+  background: var(--glass);
   border: 1px solid var(--hairline);
   border-radius: 13px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   box-shadow: var(--shadow-md);
   transition: transform 0.35s var(--ease), border-color 0.35s;
 }
@@ -849,7 +847,9 @@ h3 { font-size: 1rem; font-weight: 600; letter-spacing: 0.01em; }
   display: grid; place-items: center;
   border: 1px solid var(--hairline-strong);
   border-radius: 50%;
-  background: rgba(7, 16, 28, 0.92);
+  background: var(--glass-strong);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   box-shadow: var(--shadow-md);
   cursor: pointer;
   transition: transform 0.3s var(--ease), border-color 0.3s;
@@ -872,8 +872,8 @@ h3 { font-size: 1rem; font-weight: 600; letter-spacing: 0.01em; }
   background: var(--glass-strong);
   border: 1px solid var(--hairline-strong);
   border-radius: 16px;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   animation: chatIn 0.32s var(--ease);
