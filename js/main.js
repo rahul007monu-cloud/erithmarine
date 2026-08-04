@@ -34,6 +34,21 @@ const state = {
 // Surfaced for debugging and read by the dev screenshot harness.
 window.__boot = { mode: 'pending', errors: [] };
 
+/*
+ * Global error capture, installed before anything else runs.
+ *
+ * Without this a throw inside the render loop kills the animation frame chain
+ * silently: the canvas stays black, no error is reported anywhere, and the page
+ * looks like the scene simply decided not to draw. That cost real debugging
+ * time, so failures are now always recorded and always visible.
+ */
+window.addEventListener('error', (event) => {
+  window.__boot.errors.push(`error: ${event.message} @ ${event.filename}:${event.lineno}`);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  window.__boot.errors.push(`rejection: ${String(event.reason && event.reason.message || event.reason)}`);
+});
+
 /** Centre of the directional shadow box, roughly mid-hull at deck height. */
 const SHADOW_FOCUS = [0, 10, 0];
 
@@ -353,6 +368,23 @@ function startLoop(scene) {
   // On touch devices the "pointer" is the scroll itself; leave sway at rest.
   window.addEventListener('touchstart', () => { pointer.x = 0; pointer.y = 0; }, { passive: true });
 
+  /**
+   * Wraps a frame so a single throw cannot silently end the render loop.
+   * On failure the reason is recorded and the site drops to the readable
+   * fallback rather than sitting on a black canvas.
+   */
+  function safeFrame(now) {
+    try {
+      frame(now);
+    } catch (error) {
+      state.running = false;
+      recordError('loop', error);
+      window.__boot.mode = 'loop-failed';
+      enableFallback(`render loop failed: ${error && error.message ? error.message : error}`);
+      dismissLoader();
+    }
+  }
+
   function frame(now) {
     if (!state.running) return;
 
@@ -441,12 +473,12 @@ function startLoop(scene) {
       return;
     }
 
-    requestAnimationFrame(frame);
+    requestAnimationFrame(safeFrame);
   }
 
   void GOLDEN_HOUR;
   state.running = true;
-  requestAnimationFrame(frame);
+  requestAnimationFrame(safeFrame);
 
   // Pause rendering when the tab is hidden — no reason to burn a phone battery.
   document.addEventListener('visibilitychange', () => {
@@ -455,7 +487,7 @@ function startLoop(scene) {
     } else if (!state.running) {
       state.running = true;
       last = performance.now();
-      requestAnimationFrame(frame);
+      requestAnimationFrame(safeFrame);
     }
   });
 }
@@ -475,12 +507,37 @@ function dismissLoader() {
   });
 }
 
+/**
+ * Surfaces why the 3D scene is not running, on screen.
+ *
+ * Silently degrading to a plain page looks identical to the site being broken,
+ * which cost a lot of time to diagnose. Saying so plainly — with a way to retry
+ * — is far more useful than a mystery.
+ */
+function showFallbackNotice(reason) {
+  if (document.getElementById('no3dNotice')) return;
+
+  const notice = document.createElement('div');
+  notice.id = 'no3dNotice';
+  notice.className = 'no3d-notice';
+  notice.innerHTML = `
+    <strong>3D tour is off</strong>
+    <span>${String(reason).replace(/[<>&]/g, '')}</span>
+    <a href="?force3d=1">Try to enable it</a>
+    <button type="button" aria-label="Dismiss">&times;</button>
+  `;
+  notice.querySelector('button').addEventListener('click', () => notice.remove());
+  document.body.append(notice);
+}
+
 /** Switches permanently to the plain scrolling document. */
 function enableFallback(reason) {
   document.documentElement.classList.add('no-3d');
   document.body.style.height = 'auto';
   window.__boot.mode = 'fallback';
   window.__boot.reason = reason;
+  console.warn(`[scene] 3D disabled: ${reason}`);
+  showFallbackNotice(reason);
 
   for (const panel of state.panels) {
     panel.node.classList.add('is-visible');
@@ -510,12 +567,25 @@ async function init() {
   collectPanels();
   setProgress(0.18);
 
-  // Honour reduced-motion by not running the camera at all. `?no3d=1` is the
-  // same path, offered as an explicit escape hatch for slow devices and for
-  // anyone who simply wants to read the site.
-  const optedOut = new URLSearchParams(location.search).has('no3d');
-  if (optedOut || prefersReducedMotion()) {
-    enableFallback(optedOut ? 'opted out via ?no3d' : 'prefers-reduced-motion');
+  /*
+   * Reduced motion must NOT remove the scene.
+   *
+   * Disabling the whole 3D experience for `prefers-reduced-motion` was the
+   * wrong call: that setting is extremely common on macOS, and anyone who had
+   * it enabled saw a plain gradient with no vessel and no water at all — the
+   * entire point of the site, silently switched off.
+   *
+   * The correct reading of the preference is to remove *involuntary* motion:
+   * the idle camera drift and the pointer parallax. The scroll-driven camera
+   * stays, because it only moves when the visitor moves it.
+   */
+  const params = new URLSearchParams(location.search);
+  const forced = params.has('force3d');
+  const optedOut = !forced && params.has('no3d');
+  const reducedMotion = !forced && (params.has('reduced') || prefersReducedMotion());
+
+  if (optedOut) {
+    enableFallback('opted out via ?no3d');
     dismissLoader();
     return;
   }
@@ -524,6 +594,11 @@ async function init() {
     const scene = await bootScene();
     state.scene = scene;
     state.journey = scene.journey;
+
+    // Suppresses idle drift and pointer parallax, keeping the scroll-driven
+    // camera intact.
+    scene.journey.motionScale = reducedMotion ? 0 : 1;
+    state.reducedMotion = reducedMotion;
 
     configureScrollHeight(scene.stopCount);
     window.addEventListener('resize', debounce(() => {

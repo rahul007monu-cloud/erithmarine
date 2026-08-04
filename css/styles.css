@@ -1069,6 +1069,46 @@ html.no-3d { --rail: 0px; }
   }
 }
 
+/*
+ * Shown only when the 3D scene could not start. Explains why rather than
+ * leaving a plain page that is indistinguishable from a broken one.
+ */
+.no3d-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  max-width: min(94vw, 620px);
+  padding: 0.6rem 0.9rem;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: var(--ink-soft);
+  background: rgba(7, 16, 28, 0.94);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  box-shadow: var(--shadow-md);
+}
+
+.no3d-notice strong { color: var(--brass-soft); font-weight: 600; white-space: nowrap; }
+.no3d-notice span { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.no3d-notice a { color: var(--signal); text-decoration: underline; white-space: nowrap; }
+.no3d-notice button {
+  margin-left: auto;
+  border: none; background: transparent;
+  color: var(--ink-dim); font-size: 1.1rem; line-height: 1;
+  cursor: pointer;
+}
+.no3d-notice button:hover { color: var(--ink); }
+
+@media (max-width: 560px) {
+  .no3d-notice { border-radius: 12px; flex-wrap: wrap; }
+  .no3d-notice span { white-space: normal; }
+}
+
 @media print {
   .scene, .scene-fallback, .voyage, .fab, .chat, .loader, .topbar__actions { display: none !important; }
   html.no-3d .panel, .panel { position: static; opacity: 1 !important; visibility: visible; }

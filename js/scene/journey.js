@@ -396,6 +396,14 @@ export class Journey {
     this._splinePos = vec3.create();
     this._splineTarget = vec3.create();
     this._mouse = { x: 0, y: 0, smoothX: 0, smoothY: 0 };
+
+    /**
+     * Scales involuntary camera motion: the idle drift and the pointer
+     * parallax. Set to 0 for visitors who prefer reduced motion. The
+     * scroll-driven camera path is unaffected, because that only moves in
+     * response to the visitor's own scrolling.
+     */
+    this.motionScale = 1;
   }
 
   /** Sets the desired progress, typically from scroll position. */
@@ -461,15 +469,20 @@ export class Journey {
     const b = this.stops[clamp(segment + 1, 0, this.lastIndex)];
     const fov = lerp(a.fov, b.fov, easedLocal);
 
+    // Involuntary motion scale, declared before its first use. Both the pointer
+    // parallax and the idle drift are suppressed when the visitor has asked for
+    // reduced motion; the scroll-driven path is unaffected.
+    const motion = this.motionScale;
+
     // Parallax: interiors get a small, tight sway; exteriors a wider drift.
     const interior = isInteriorMood(this.mood);
-    const swayScale = interior ? 0.55 : 1.0;
+    const swayScale = (interior ? 0.55 : 1.0) * motion;
     const swayX = this._mouse.smoothX * swayScale;
     const swayY = this._mouse.smoothY * swayScale;
 
     // A slow idle drift keeps the frame alive when the visitor is not moving.
-    const driftX = Math.sin(time * 0.16) * 0.55 + Math.sin(time * 0.071) * 0.3;
-    const driftY = Math.cos(time * 0.13) * 0.35;
+    const driftX = (Math.sin(time * 0.16) * 0.55 + Math.sin(time * 0.071) * 0.3) * motion;
+    const driftY = Math.cos(time * 0.13) * 0.35 * motion;
 
     // Sway is applied in the camera's own basis so it always reads as a look,
     // not a slide along world axes.
