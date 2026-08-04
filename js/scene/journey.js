@@ -119,16 +119,16 @@ export const STOPS = [
     mood: 'engine',
     // Engine room, alongside the main engine.
     position: [
-      INTERIOR_ANCHORS.engineRoom.x - 11.5,
-      INTERIOR_ANCHORS.engineRoom.y + 10.4,
-      INTERIOR_ANCHORS.engineRoom.z - 18,
+      INTERIOR_ANCHORS.engineRoom.x - 10.5,
+      INTERIOR_ANCHORS.engineRoom.y + 11.2,
+      INTERIOR_ANCHORS.engineRoom.z - 19,
     ],
     target: [
-      INTERIOR_ANCHORS.engineRoom.x + 1.5,
-      INTERIOR_ANCHORS.engineRoom.y + 6.0,
-      INTERIOR_ANCHORS.engineRoom.z + 10,
+      INTERIOR_ANCHORS.engineRoom.x + 0.5,
+      INTERIOR_ANCHORS.engineRoom.y + 8.5,
+      INTERIOR_ANCHORS.engineRoom.z + 12,
     ],
-    fov: 72,
+    fov: 66,
   },
   {
     id: 'technical',
@@ -243,7 +243,7 @@ export const MOODS = {
     fogDensity: 0.0004,
     exposure: 1.06,
     vignette: 0.8,
-    bloomStrength: 0.5,
+    bloomStrength: 0.3,
     lights: [
       // Warm instrument glow low on the console, plus dim overhead.
       { at: 'bridge', offset: [0, 0.4, 3.0], color: [1.0, 0.62, 0.30], intensity: 1.09, range: 13 },
@@ -257,7 +257,7 @@ export const MOODS = {
     fogDensity: 0.0016,
     exposure: 1.12,
     vignette: 0.9,
-    bloomStrength: 0.75,
+    bloomStrength: 0.32,
     lights: [
       // Deckhead fluorescents, matching the emissive fittings in interiors.js.
       { at: 'engineRoom', offset: [0, 17.2, -14], color: [0.86, 0.92, 1.0], intensity: 1.6, range: 34 },
@@ -273,7 +273,7 @@ export const MOODS = {
     fogDensity: 0.0022,
     exposure: 1.15,
     vignette: 0.94,
-    bloomStrength: 0.7,
+    bloomStrength: 0.32,
     lights: [
       // Daylight down the open hatch, plus hold lamps near the deckhead.
       { at: 'cargoHold', offset: [0, 20.5, 0], color: [0.80, 0.89, 1.0], intensity: 1.7, range: 40 },
@@ -289,7 +289,7 @@ export const MOODS = {
     fogDensity: 0.0008,
     exposure: 1.08,
     vignette: 0.86,
-    bloomStrength: 0.68,
+    bloomStrength: 0.32,
     lights: [
       { at: 'engineControlRoom', offset: [-1.5, 1.6, 3.0], color: [0.42, 0.86, 0.92], intensity: 1.18, range: 12 },
       { at: 'engineControlRoom', offset: [0, 2.6, -1.0], color: [0.86, 0.92, 1.0], intensity: 0.84, range: 13 },
@@ -304,7 +304,7 @@ export const MOODS = {
     fogDensity: 0.0005,
     exposure: 1.04,
     vignette: 0.8,
-    bloomStrength: 0.48,
+    bloomStrength: 0.28,
     lights: [
       { at: 'crewMess', offset: [0, 2.5, 0], color: [1.0, 0.88, 0.70], intensity: 1.22, range: 16 },
       { at: 'crewMess', offset: [-5, 2.3, 4], color: [1.0, 0.82, 0.58], intensity: 0.84, range: 13 },
@@ -319,7 +319,7 @@ export const MOODS = {
     fogDensity: 0.0004,
     exposure: 1.02,
     vignette: 0.84,
-    bloomStrength: 0.5,
+    bloomStrength: 0.28,
     lights: [
       { at: 'cabin', offset: [-1.4, 1.5, 2.4], color: [1.0, 0.80, 0.52], intensity: 0.92, range: 8 },
       { at: 'cabin', offset: [0, 2.3, 0], color: [0.94, 0.92, 0.88], intensity: 0.63, range: 10 },
@@ -334,7 +334,7 @@ export const MOODS = {
     fogDensity: 0.0005,
     exposure: 1.04,
     vignette: 0.82,
-    bloomStrength: 0.5,
+    bloomStrength: 0.28,
     lights: [
       { at: 'shipOffice', offset: [0, 2.4, 0], color: [0.96, 0.95, 0.92], intensity: 1.09, range: 14 },
       { at: 'shipOffice', offset: [-1.8, 1.5, 2.2], color: [0.46, 0.80, 0.90], intensity: 0.67, range: 8 },

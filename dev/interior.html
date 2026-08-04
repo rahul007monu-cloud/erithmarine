@@ -100,6 +100,29 @@
       });
       const ms = performance.now() - t0;
 
+      /*
+       * Reads back rendered pixels so brightness can be measured rather than
+       * guessed at from a screenshot. Requires preserveDrawingBuffer, which the
+       * dev context sets. Coordinates are fractions of the canvas.
+       */
+      window.__sample = (points) => {
+        const copy = document.createElement('canvas');
+        copy.width = canvas.width;
+        copy.height = canvas.height;
+        const ctx = copy.getContext('2d');
+        ctx.drawImage(canvas, 0, 0);
+        const out = {};
+        for (const [name, fx, fy] of points) {
+          const d = ctx.getImageData(
+            Math.round(fx * canvas.width),
+            Math.round(fy * canvas.height),
+            1, 1,
+          ).data;
+          out[name] = `${d[0]},${d[1]},${d[2]}`;
+        }
+        return out;
+      };
+
       const err = gl.getError();
       const visible = interiors.batches.filter((b) => !b.hidden).length;
       document.title = [

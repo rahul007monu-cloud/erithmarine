@@ -36,7 +36,9 @@ function part(w, h, d, x, y, z, color, rot = null) {
 
 function tube(radius, length, x, y, z, color, rot = null) {
   return {
-    geometry: createCylinder(radius, radius, length, 12, true),
+    // 20 segments: interiors are viewed from a couple of metres away, where 12
+    // segments reads as a faceted prism rather than a pipe.
+    geometry: createCylinder(radius, radius, length, 20, true),
     matrix: rot
       ? mat4.compose(m(), vec3.create(x, y, z), vec3.create(rot[0], rot[1], rot[2]), vec3.create(1, 1, 1))
       : mat4.fromTranslation(m(), vec3.create(x, y, z)),
@@ -50,17 +52,17 @@ const C = {
   consoleTop: [0.09, 0.10, 0.12],
   wood: [0.28, 0.18, 0.11],
   paperWhite: [0.72, 0.71, 0.66],
-  steel: [0.34, 0.36, 0.39],
-  darkSteel: [0.13, 0.14, 0.16],
-  engineGreen: [0.10, 0.20, 0.17],
-  engineBlock: [0.14, 0.16, 0.19],
-  copper: [0.42, 0.24, 0.12],
-  pipeRed: [0.34, 0.10, 0.09],
-  pipeBlue: [0.11, 0.20, 0.34],
-  pipeYellow: [0.42, 0.34, 0.10],
-  grating: [0.22, 0.23, 0.24],
-  holdWall: [0.19, 0.20, 0.21],
-  rust: [0.30, 0.17, 0.10],
+  steel: [0.175, 0.185, 0.20],
+  darkSteel: [0.062, 0.068, 0.076],
+  engineGreen: [0.048, 0.078, 0.062],
+  engineBlock: [0.058, 0.064, 0.070],
+  copper: [0.215, 0.120, 0.058],
+  pipeRed: [0.185, 0.058, 0.050],
+  pipeBlue: [0.055, 0.098, 0.175],
+  pipeYellow: [0.215, 0.175, 0.055],
+  grating: [0.105, 0.110, 0.115],
+  holdWall: [0.085, 0.092, 0.088],
+  rust: [0.155, 0.088, 0.052],
   screenGlow: [0.10, 0.55, 0.55],
   lampWarm: [1.0, 0.80, 0.48],
   lampCool: [0.80, 0.90, 1.0],
@@ -204,12 +206,14 @@ function buildEngineRoom() {
     body.push(tube(0.16, 3.0, a.x + 4.3, a.y + 5.4, z, C.steel));
   }
 
-  // Exhaust manifold running the length of the engine.
-  body.push(tube(1.25, 25, a.x - 4.6, a.y + 10.5, engineZ, C.rust, [Math.PI / 2, 0, 0]));
+  // Exhaust manifold running the length of the engine, on the flank away from
+  // the walkway the camera stands on.
+  body.push(tube(1.05, 25, a.x + 4.8, a.y + 10.8, engineZ, C.rust, [Math.PI / 2, 0, 0]));
 
-  // Turbocharger at the aft end.
-  body.push(tube(2.3, 4.4, a.x - 4.6, a.y + 12.6, engineZ - 14, C.darkSteel, [Math.PI / 2, 0, 0]));
-  body.push(tube(3.0, 1.2, a.x - 4.6, a.y + 12.6, engineZ - 16.6, C.steel, [Math.PI / 2, 0, 0]));
+  // Turbocharger at the aft end, tucked outboard and high so it frames the
+  // engine rather than blocking the view down it.
+  body.push(tube(1.5, 3.2, a.x + 5.2, a.y + 13.4, engineZ - 15, C.darkSteel, [Math.PI / 2, 0, 0]));
+  body.push(tube(2.0, 0.9, a.x + 5.2, a.y + 13.4, engineZ - 16.9, C.steel, [Math.PI / 2, 0, 0]));
 
   // Upper grating platform with railing, reached by a ladder.
   const platformY = a.y + 8.0;
@@ -730,7 +734,7 @@ export function createInteriors(gl, shipModel) {
       doubleSided: true,
       // Emissive surfaces are the visible fixtures; the actual illumination
       // comes from the point lights defined in journey.js MOODS.
-      material: { roughness: 0.4, metallic: 0.0, emissive: 1.35, ambientOcclusion: 0.6, sunlit: 0.05 },
+      material: { roughness: 0.4, metallic: 0.0, emissive: 0.85, ambientOcclusion: 0.6, sunlit: 0.05 },
     });
   }
 

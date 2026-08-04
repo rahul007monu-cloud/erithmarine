@@ -1038,6 +1038,85 @@ void main() {
   outColor = vec4(vec3(1.0 - v), 1.0);
 }`;
 
+/**
+ * FXAA — edge-aware anti-aliasing on the composited image.
+ *
+ * The scene is drawn into off-screen targets, so the canvas's own multisampling
+ * never applies and every silhouette arrives with hard stair-stepping. Railings,
+ * masts and container edges are the worst affected, and hard jagged edges are a
+ * strong signal that an image is synthetic.
+ *
+ * This is the standard luminance-based variant: find the local contrast, work out
+ * which way the edge runs, and blend along it.
+ */
+export const FXAA_FRAG = /* glsl */ `#version 300 es
+precision highp float;
+
+in vec2 vUV;
+uniform sampler2D uSource;
+uniform vec2 uTexelSize;
+uniform float uAmount;
+
+out vec4 outColor;
+
+float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+
+void main() {
+  vec3 centre = texture(uSource, vUV).rgb;
+
+  if (uAmount < 0.001) {
+    outColor = vec4(centre, 1.0);
+    return;
+  }
+
+  vec2 t = uTexelSize;
+
+  float lNW = luma(texture(uSource, vUV + vec2(-t.x, -t.y)).rgb);
+  float lNE = luma(texture(uSource, vUV + vec2( t.x, -t.y)).rgb);
+  float lSW = luma(texture(uSource, vUV + vec2(-t.x,  t.y)).rgb);
+  float lSE = luma(texture(uSource, vUV + vec2( t.x,  t.y)).rgb);
+  float lM  = luma(centre);
+
+  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
+  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+  float range = lMax - lMin;
+
+  // Flat areas are left alone, which keeps texture detail crisp.
+  if (range < max(0.032, lMax * 0.10)) {
+    outColor = vec4(centre, 1.0);
+    return;
+  }
+
+  // Edge direction from the luminance gradient across the diagonal taps.
+  vec2 dir = vec2(
+    -((lNW + lNE) - (lSW + lSE)),
+     ((lNW + lSW) - (lNE + lSE))
+  );
+
+  float reduce = max(
+    (abs(dir.x) + abs(dir.y)) * 0.25 * 0.5,
+    1.0 / 128.0
+  );
+  float scale = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
+  // Clamped so near-axis-aligned edges cannot smear across the image.
+  dir = clamp(dir * scale, vec2(-8.0), vec2(8.0)) * t;
+
+  vec3 near = 0.5 * (
+    texture(uSource, vUV + dir * (1.0 / 3.0 - 0.5)).rgb +
+    texture(uSource, vUV + dir * (2.0 / 3.0 - 0.5)).rgb
+  );
+  vec3 far = near * 0.5 + 0.25 * (
+    texture(uSource, vUV + dir * -0.5).rgb +
+    texture(uSource, vUV + dir *  0.5).rgb
+  );
+
+  // The wider filter is only trusted while it stays inside the local range.
+  float lFar = luma(far);
+  vec3 resolved = (lFar < lMin || lFar > lMax) ? near : far;
+
+  outColor = vec4(mix(centre, resolved, uAmount), 1.0);
+}`;
+
 /** Final composite: bloom, exposure, ACES, vignette, grain, sRGB. */
 export const COMPOSITE_FRAG = /* glsl */ `#version 300 es
 precision highp float;

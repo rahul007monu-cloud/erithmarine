@@ -20,6 +20,7 @@ import {
   FULLSCREEN_VERT,
 } from '../engine/gl.js';
 import {
+  FXAA_FRAG,
   SSAO_FRAG,
   AO_BLUR_FRAG,
   SHADOW_VERT,
@@ -59,7 +60,7 @@ export const GOLDEN_HOUR = {
   bloomStrength: 0.62,
   bloomThreshold: 1.05,
   vignette: 0.66,
-  grain: 0.02,
+  grain: 0.012,
 };
 
 /** Interior lighting preset — dimmer, cooler ambient, almost no fog. */
@@ -108,6 +109,7 @@ export class Renderer {
       shadowDebug: new Program(gl, FULLSCREEN_VERT, SHADOW_DEBUG_FRAG, 'shadowDebug'),
       ssao: new Program(gl, FULLSCREEN_VERT, SSAO_FRAG, 'ssao'),
       aoBlur: new Program(gl, FULLSCREEN_VERT, AO_BLUR_FRAG, 'aoBlur'),
+      fxaa: new Program(gl, FULLSCREEN_VERT, FXAA_FRAG, 'fxaa'),
     };
 
     this.environment = { ...GOLDEN_HOUR };
@@ -180,6 +182,11 @@ export class Renderer {
     this.aoStrength = 0.85;
     this.aoRadius = 0.85;     // metres; interiors are the reason this is small
 
+    // Anti-aliasing. The scene never touches the canvas directly, so the
+    // canvas's own multisampling never applies and edges need resolving here.
+    this.fxaaAmount = 0.85;
+    this._fxaaTexel = new Float32Array(2);
+
     this.targets = null;
     this.width = 0;
     this.height = 0;
@@ -241,6 +248,7 @@ export class Renderer {
       this.targets.reflection.dispose();
       this.targets.aoA.dispose();
       this.targets.aoB.dispose();
+      this.targets.ldr.dispose();
     }
 
     const bloomWidth = Math.max(2, Math.floor(width / 4));
@@ -260,6 +268,7 @@ export class Renderer {
       ),
       aoA: createFramebuffer(gl, aoWidth, aoHeight, { depth: false, float: false }),
       aoB: createFramebuffer(gl, aoWidth, aoHeight, { depth: false, float: false }),
+      ldr: createFramebuffer(gl, width, height, { depth: false, float: false }),
     };
 
     this.canvas.width = width;
@@ -711,8 +720,14 @@ export class Renderer {
     drawFullscreen(gl);
 
     // -------------------------------------------------------------- composite
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.width, this.height);
+    // Rendered to an LDR target rather than the canvas, so FXAA can resolve it.
+    const toScreen = this.fxaaAmount <= 0.001;
+    if (toScreen) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.width, this.height);
+    } else {
+      this.targets.ldr.bind();
+    }
 
     // Development aid: draw the raw shadow map instead of the scene.
     if (this.debugShadowMap && this.shadow) {
@@ -738,6 +753,20 @@ export class Renderer {
       });
     drawFullscreen(gl);
 
+    // ------------------------------------------------------------------ FXAA
+    if (!toScreen) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.width, this.height);
+
+      this._fxaaTexel[0] = 1 / this.width;
+      this._fxaaTexel[1] = 1 / this.height;
+
+      this.programs.fxaa.use()
+        .setTexture('uSource', this.targets.ldr.color, 0)
+        .setAll({ uTexelSize: this._fxaaTexel, uAmount: this.fxaaAmount });
+      drawFullscreen(gl);
+    }
+
     gl.depthMask(true);
     gl.enable(gl.DEPTH_TEST);
   }
@@ -753,6 +782,7 @@ export class Renderer {
       this.targets.reflection.dispose();
       this.targets.aoA.dispose();
       this.targets.aoB.dispose();
+      this.targets.ldr.dispose();
     }
   }
 }
