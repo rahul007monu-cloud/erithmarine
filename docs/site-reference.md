@@ -15,7 +15,7 @@ commercial management, consultancy, and pre-sea courses.
 | Mobile | +91 78774 84978 |
 | Landline | +91 141 452 0350 |
 | Offices | Jaipur, Navi Mumbai, Dubai, Turkey |
-| Founder / CEO | H.S. Tanwar |
+| Founder / CEO | Karan Singh Tomar |
 | Management Head | Ashish Shukla |
 | DPA | Capt. Dhruv |
 | Tagline | "Navigate Your Maritime Success" |
@@ -23,8 +23,11 @@ commercial management, consultancy, and pre-sea courses.
 > **Open questions for the client**
 > - Registered RPSL licence number + validity (not currently displayed anywhere)
 > - Full postal addresses for all four offices
-> - Where Karan Singh Tomar should appear (named as a partner, absent from the site)
 > - Official logo asset
+>
+> **Resolved:** the live site credits "H.S. Tanwar" as Founder/CEO. The client has
+> confirmed that name is wrong — the Founder & CEO is **Karan Singh Tomar**. The
+> rebuild uses the corrected name.
 
 ## Site 1 — edithmaritime.com (WordPress + Elementor)
 
@@ -59,7 +62,7 @@ commercial management, consultancy, and pre-sea courses.
 - Contact form has no confirmation step or CRM destination
 - "Careers At EMS" is a static link, not a live job board
 - No RPSL licence number or DG Shipping approval badge anywhere
-- No multilingual support despite Dubai and Turkey offices
+- Founder/CEO name is incorrect on the live site
 - Testimonials are generic, with no client logos or photos
 - Top-bar trending text is hardcoded
 
@@ -93,10 +96,10 @@ Internal recruitment CRM for seafarer CV submissions.
 - Sections mapped onto ship locations (deck, bridge, engine room, cargo hold)
 - Live job board driven by editable data
 - CV upload wired to the same backend as the CRM
-- Gemini-powered assistant for candidate queries
+- Candidate assistant: ships with a built-in browser-side retrieval assistant that needs no API key and costs nothing; upgrades to Gemini automatically if a key is configured
 - PWA install support with offline shell
 - RPSL licence badge and a "recruitment is free" trust notice
-- English / Hindi language toggle (Turkish later)
+- English only (the client asked for a single language; the copy layer is keyed so another language can be added later without touching markup)
 - Per-page SEO metadata
 - WhatsApp floating contact button
 

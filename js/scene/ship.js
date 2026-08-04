@@ -687,12 +687,17 @@ export function createShip(gl) {
       name: 'glass',
       mesh: glassMesh,
       model,
+      // Genuinely transparent: the bridge interior has no forward bulkhead, so
+      // this glazing is what the camera looks through to reach the horizon.
+      transparent: true,
+      doubleSided: true,
       material: {
-        roughness: 0.06,
-        metallic: 0.85,
+        roughness: 0.05,
+        metallic: 0.6,
         emissive: 0.0,
         tintColor: PALETTE.glass,
         tintAmount: 1.0,
+        opacity: 0.24,
       },
     },
   ];

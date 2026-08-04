@@ -502,6 +502,20 @@ uniform float uTintAmount;
 uniform sampler2D uAlbedoMap;
 uniform float uUseMap;
 uniform float uOpacity;
+
+// Interior lighting. Sky/sun alone cannot light enclosed spaces, so the bridge,
+// engine room and cargo hold are lit by a handful of point lights instead.
+#define MAX_LIGHTS 6
+uniform vec3  uLightPosition[MAX_LIGHTS];
+uniform vec3  uLightColor[MAX_LIGHTS];
+uniform float uLightRange[MAX_LIGHTS];
+uniform int   uLightCount;
+// Scales the sky-derived ambient down when the camera is inside the hull.
+uniform float uAmbientScale;
+// How much direct sunlight reaches this surface. There is no shadow map, so
+// enclosed geometry sets this near zero — otherwise the sun lights interior
+// decks straight through the hull plating.
+uniform float uSunlit;
 // Waterline darkening: hull below this world Y gets wet/dark treatment.
 uniform float uWaterlineY;
 uniform float uWaterlineAmount;
@@ -537,12 +551,12 @@ void main() {
   vec3 skySide = skyColor(normalize(vec3(n.x, 0.12, n.z)), 0.0);
   // Sky fill is the only thing that keeps cool paint reading cool under a
   // warm sun; too little of it and every blue surface turns grey.
-  vec3 ambient = mix(skySide, skyUp, saturate(n.y * 0.5 + 0.5)) * 0.85;
+  vec3 ambient = mix(skySide, skyUp, saturate(n.y * 0.5 + 0.5)) * 0.85 * uAmbientScale;
 
   // Sun with a soft wrap so shadowed sides never go fully black.
   float ndl = dot(n, uSunDirection);
   float wrapped = saturate((ndl + 0.28) / 1.28);
-  vec3 direct = uSunColor * wrapped;
+  vec3 direct = uSunColor * wrapped * uSunlit;
 
   // Blinn-Phong specular standing in for GGX — visually close at far less cost.
   vec3 halfVector = normalize(uSunDirection + viewDir);
@@ -555,12 +569,35 @@ void main() {
 
   vec3 diffuse = albedo * (ambient * uAmbientOcclusion + direct * 0.85);
   vec3 spec = mix(uSunColor, uSunColor * albedo, uMetallic)
-            * specular * (0.35 + fresnel * 2.2);
+            * specular * (0.35 + fresnel * 2.2) * uSunlit;
+
+  // Point lights: inverse-square falloff with a smooth cutoff at the range so
+  // fixtures never produce a hard circular edge on the geometry.
+  for (int i = 0; i < uLightCount; i++) {
+    vec3 toLight = uLightPosition[i] - vWorldPosition;
+    float dist = length(toLight);
+    float range = uLightRange[i];
+    if (dist > range) continue;
+
+    vec3 lightDir = toLight / max(dist, 1e-4);
+    float attenuation = 1.0 / (1.0 + 0.09 * dist + 0.006 * dist * dist);
+    attenuation *= 1.0 - smoothstep(range * 0.65, range, dist);
+
+    float lambert = saturate(dot(n, lightDir)) * 0.92 + 0.08;
+    vec3 radiance = uLightColor[i] * attenuation;
+
+    diffuse += albedo * radiance * lambert;
+
+    vec3 h = normalize(lightDir + viewDir);
+    spec += radiance * pow(saturate(dot(n, h)), gloss)
+          * mix(0.05, 0.8, 1.0 - uRoughness);
+  }
 
   // Sky reflection on glossy metal (rails, glass, painted steel).
   vec3 reflectDir = reflect(-viewDir, n);
   vec3 envReflection = skyColor(reflectDir, uCloudAmount);
-  vec3 col = diffuse + spec + envReflection * fresnel * (1.0 - uRoughness) * 0.6;
+  vec3 col = diffuse + spec
+          + envReflection * fresnel * (1.0 - uRoughness) * 0.6 * uAmbientScale;
 
   // Wet, darker plating below the waterline.
   if (uWaterlineAmount > 0.001) {

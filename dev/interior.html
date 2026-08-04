@@ -1,0 +1,119 @@
+<!doctype html>
+<!-- Dev preview: renders any journey stop, including all seven interiors. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>pending</title>
+  <style>
+    html, body { margin: 0; background: #000; height: 100%; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    #err {
+      position: fixed; inset: 0; padding: 24px; color: #ff9a9a;
+      font: 12px/1.55 ui-monospace, monospace; white-space: pre-wrap;
+      background: rgba(0,0,0,.92); display: none; overflow: auto; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <pre id="err"></pre>
+
+  <script type="module">
+    window.__errors = [];
+    window.addEventListener('error', (e) => window.__errors.push(String(e.message)));
+    window.addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
+
+    import { vec3 } from '../js/engine/math.js';
+    import { createContext } from '../js/engine/gl.js';
+    import { createOcean } from '../js/scene/ocean.js';
+    import { Renderer, GOLDEN_HOUR } from '../js/scene/renderer.js';
+    import { createShip, shipPose, applyShipPose, SHIP } from '../js/scene/ship.js';
+    import { createInteriors } from '../js/scene/interiors.js';
+    import { Journey, STOPS, MOOD_SPACE, MOODS } from '../js/scene/journey.js';
+
+    const show = (msg) => {
+      const el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent = msg;
+      document.title = 'INT_FAIL: ' + msg.split('\n')[0];
+    };
+
+    try {
+      const canvas = document.getElementById('c');
+      const gl = createContext(canvas, { preserveDrawingBuffer: true });
+      if (!gl) throw new Error('no webgl2');
+
+      const renderer = new Renderer(gl, canvas);
+      const ocean = createOcean(gl);
+      const ship = createShip(gl);
+      const interiors = createInteriors(gl, ship.model);
+      const journey = new Journey();
+
+      renderer.resize(
+        Math.min(window.innerWidth, 1600),
+        Math.min(window.innerHeight, 900),
+      );
+
+      // ?stop=<index> or ?stop=<id>
+      const params = new URLSearchParams(location.search);
+      const raw = params.get('stop') || '0';
+      let index = Number.isNaN(Number(raw))
+        ? STOPS.findIndex((s) => s.id === raw)
+        : Number(raw);
+      if (index < 0) index = 0;
+
+      journey.snapTo(index);
+      journey.setPointer(0, 0);
+      const TIME = 40;
+      const camera = journey.update(1 / 60, TIME);
+
+      // Mood drives lighting, exposure and which interior is drawn.
+      const mood = journey.resolveMoodParameters();
+      renderer.setEnvironment({ ...GOLDEN_HOUR, ...mood });
+      renderer.ambientScale = mood.ambientScale;
+      renderer.setLights(journey.resolveLights());
+
+      const space = journey.visibleSpace;
+      interiors.setVisible(space);
+
+      const pose = shipPose(TIME, renderer.environment.waveScale);
+      applyShipPose(ship.model, pose);
+
+      const t0 = performance.now();
+      const moodPreset = MOODS[STOPS[index].mood] || MOODS.exterior;
+      renderer.render({
+        camera,
+        time: TIME,
+        ocean,
+        showOcean: moodPreset.showOcean !== false,
+        solids: [...ship.batches, ...interiors.batches],
+        vessel: {
+          position: [0, 0, 0],
+          heading: 0,
+          halfBeam: SHIP.beam / 2,
+          halfLength: SHIP.loa / 2,
+          shadow: 0.85,
+          wake: 1.0,
+        },
+      });
+      const ms = performance.now() - t0;
+
+      const err = gl.getError();
+      const visible = interiors.batches.filter((b) => !b.hidden).length;
+      document.title = [
+        err === gl.NO_ERROR ? 'INT_OK' : 'INT_FAIL',
+        'stop:' + index + ':' + STOPS[index].id,
+        'mood:' + STOPS[index].mood,
+        'space:' + (space || 'none'),
+        'batches:' + visible,
+        'lights:' + journey.resolveLights().length,
+        'cam:' + camera.position.map((v) => v.toFixed(0)).join(','),
+        'ms:' + ms.toFixed(0),
+        'glerr:0x' + err.toString(16),
+      ].join(' ');
+    } catch (e) {
+      show((e && e.message ? e.message : String(e)) + '\n\n' + (e && e.stack ? e.stack : ''));
+    }
+  </script>
+</body>
+</html>

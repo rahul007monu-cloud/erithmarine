@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Edith Maritime">
+  <rect width="48" height="48" rx="10" fill="#050b14"/>
+  <!-- Sail / bow silhouette -->
+  <path d="M24 9 L37 31 H11 Z" fill="none" stroke="#d8a84b" stroke-width="2.2" stroke-linejoin="round" opacity=".85"/>
+  <!-- Waterline -->
+  <path d="M7 36 q5.5 -3 11 0 t11 0 t11 0" fill="none" stroke="#4fd0c4" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M7 41 q5.5 -3 11 0 t11 0 t11 0" fill="none" stroke="#4fd0c4" stroke-width="1.8" stroke-linecap="round" opacity=".5"/>
+</svg>

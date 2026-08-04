@@ -73,6 +73,8 @@ const DEFAULT_MATERIAL = {
   tintAmount: 0.0,
   waterlineY: -999,
   waterlineAmount: 0.0,
+  // 1 = outdoors, ~0 = enclosed (stands in for shadowing).
+  sunlit: 1.0,
   map: null,
   // 1 = alpha-blended decal, 2 = opaque texture.
   mapMode: 1,
@@ -110,10 +112,19 @@ export class Renderer {
     this._blurH = new Float32Array([1, 0]);
     this._blurV = new Float32Array([0, 1]);
 
+    // Point-light staging buffers, sized to MAX_LIGHTS in the shader.
+    this.maxLights = 6;
+    this._lightPositions = new Float32Array(this.maxLights * 3);
+    this._lightColors = new Float32Array(this.maxLights * 3);
+    this._lightRanges = new Float32Array(this.maxLights);
+    this._lightCount = 0;
+
     this.targets = null;
     this.width = 0;
     this.height = 0;
     this.fadeToBlack = 0;
+    // Scales sky ambient on solids; dropped when the camera moves inside.
+    this.ambientScale = 1;
 
     this._updateSun();
   }
@@ -200,6 +211,29 @@ export class Renderer {
   }
 
   /**
+   * Stages point lights for the next frame.
+   * @param {Array} lights [{ position:[x,y,z], color:[r,g,b], range:number }]
+   */
+  setLights(lights) {
+    const count = Math.min(lights ? lights.length : 0, this.maxLights);
+    for (let i = 0; i < count; i++) {
+      const light = lights[i];
+      this._lightPositions[i * 3] = light.position[0];
+      this._lightPositions[i * 3 + 1] = light.position[1];
+      this._lightPositions[i * 3 + 2] = light.position[2];
+
+      const intensity = light.intensity !== undefined ? light.intensity : 1;
+      this._lightColors[i * 3] = light.color[0] * intensity;
+      this._lightColors[i * 3 + 1] = light.color[1] * intensity;
+      this._lightColors[i * 3 + 2] = light.color[2] * intensity;
+
+      this._lightRanges[i] = light.range;
+    }
+    this._lightCount = count;
+    return this;
+  }
+
+  /**
    * Draws one pass of the solid list, filtered by transparency.
    *
    * Transparent items blend against the depth buffer written by the opaque
@@ -239,6 +273,7 @@ export class Renderer {
         uTintAmount: material.tintAmount,
         uWaterlineY: material.waterlineY,
         uWaterlineAmount: material.waterlineAmount,
+        uSunlit: material.sunlit,
         uOpacity: material.opacity,
         uUseMap: material.map ? material.mapMode : 0,
       });
@@ -306,7 +341,7 @@ export class Renderer {
     gl.enable(gl.DEPTH_TEST);
 
     // ---------------------------------------------------------------- ocean
-    if (frame.ocean) {
+    if (frame.ocean && frame.showOcean !== false) {
       // Vessel frame for the wake and contact shadow.
       const vessel = frame.vessel;
       if (vessel) {
@@ -355,6 +390,11 @@ export class Renderer {
         ...shared,
         uProjection: this._projection,
         uView: this._view,
+        uAmbientScale: this.ambientScale,
+        uLightPosition: this._lightPositions,
+        uLightColor: this._lightColors,
+        uLightRange: this._lightRanges,
+        uLightCount: this._lightCount,
       });
 
       // Opaque geometry first, then anything transparent, so decals and glass

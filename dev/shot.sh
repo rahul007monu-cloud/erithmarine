@@ -55,7 +55,12 @@ sleep "$SETTLE"
 
 if [ "$SCROLL" != "0" ]; then
   agent-browser --session "$SESSION" eval "window.scrollTo(0, ${SCROLL}); 'scrolled'" > /dev/null 2>&1
-  sleep 1.5
+  sleep 1
+  # When the page halted its render loop for capture, advance it manually so the
+  # camera eases into the newly scrolled stop before the screenshot.
+  agent-browser --session "$SESSION" eval \
+    "typeof window.__step === 'function' ? JSON.stringify(window.__step(150)) : 'no-step'" 2>&1 | tail -2
+  sleep 0.5
 fi
 
 echo "--- title ---"

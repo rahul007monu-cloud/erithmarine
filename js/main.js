@@ -1,0 +1,488 @@
+/**
+ * main.js — Application entry point.
+ *
+ * Responsibilities, in order:
+ *   1. Render all DOM content from js/content.js and wire the interactive parts.
+ *      This happens first and unconditionally, so the site is complete and
+ *      usable even if the 3D scene never starts.
+ *   2. Attempt to boot the WebGL voyage. On any failure — no WebGL2, reduced
+ *      motion, a shader that will not compile — fall back to a plain scrolling
+ *      document by adding `.no-3d` to <html>.
+ *   3. Drive the camera from scroll position and fade panels in and out to match.
+ */
+
+import { clamp, smoothstep } from './engine/math.js';
+import { createContext } from './engine/gl.js';
+import { $, $$, applyStrings, debounce, prefersReducedMotion } from './ui/dom.js';
+import { renderAll, setActiveSection } from './ui/render.js';
+import { mountJobs } from './ui/jobs.js';
+import { mountApplyForm, mountContactForm } from './ui/forms.js';
+import { mountChat } from './ui/chat.js';
+import { registerServiceWorker, mountInstallPrompt } from './ui/pwa.js';
+
+/* ------------------------------------------------------------------ globals */
+
+const state = {
+  scene: null,        // populated only if WebGL boots
+  journey: null,
+  panels: [],
+  activeSection: null,
+  scrollHeightPerStop: 0,
+  running: false,
+};
+
+// Surfaced for debugging and read by the dev screenshot harness.
+window.__boot = { mode: 'pending', errors: [] };
+
+/** Frames to render before halting, when driven by the dev harness. */
+function captureFrames() {
+  const value = new URLSearchParams(location.search).get('capture');
+  if (!value) return 0;
+  const frames = Number(value);
+  return Number.isFinite(frames) && frames > 0 ? frames : 45;
+}
+
+const recordError = (label, error) => {
+  const message = error && error.message ? error.message : String(error);
+  window.__boot.errors.push(`${label}: ${message}`);
+  console.error(`[${label}]`, error);
+};
+
+/* ---------------------------------------------------------------- DOM first */
+
+function jumpToStop(stopIndex, sectionId) {
+  if (state.journey && state.scrollHeightPerStop) {
+    window.scrollTo({
+      top: stopIndex * state.scrollHeightPerStop,
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    });
+  } else {
+    document.getElementById(sectionId)?.scrollIntoView({
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+      block: 'start',
+    });
+  }
+  closeMobileNav();
+}
+
+function closeMobileNav() {
+  $('#nav')?.classList.remove('is-open');
+  $('#hamburger')?.setAttribute('aria-expanded', 'false');
+}
+
+function mountChrome() {
+  const hamburger = $('#hamburger');
+  const nav = $('#nav');
+
+  hamburger?.addEventListener('click', () => {
+    const open = nav.classList.toggle('is-open');
+    hamburger.setAttribute('aria-expanded', String(open));
+  });
+
+  // Condense the top bar once the visitor has moved off the hero.
+  const topbar = $('#topbar');
+  const onScroll = () => topbar?.classList.toggle('is-condensed', window.scrollY > 40);
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  // Anchor links inside panels should drive the camera, not native anchoring.
+  for (const link of $$('a[data-stop]')) {
+    link.addEventListener('click', (event) => {
+      const target = link.getAttribute('href') || '';
+      if (!target.startsWith('#')) return;
+      event.preventDefault();
+      jumpToStop(Number(link.dataset.stop), target.slice(1));
+    });
+  }
+}
+
+async function mountDOM() {
+  applyStrings();
+  renderAll(jumpToStop);
+  mountChrome();
+
+  const prefillApply = mountApplyForm();
+  mountContactForm();
+
+  await mountJobs((job) => {
+    // Jump to the form, then pre-select the rank that was clicked.
+    jumpToStop(11, 'apply');
+    prefillApply?.(job);
+    setTimeout(() => $('#ap-name')?.focus(), prefersReducedMotion() ? 0 : 900);
+  });
+
+  mountChat();
+  mountInstallPrompt();
+}
+
+/* -------------------------------------------------------------- 3D pipeline */
+
+/**
+ * Boots the WebGL voyage. Every heavy module is imported dynamically so a
+ * device that cannot run the scene never pays to download or parse it.
+ */
+async function bootScene() {
+  const canvas = $('#scene');
+  if (!canvas) throw new Error('canvas missing');
+
+  // `?capture=<frames>` is a development affordance: it retains the drawing
+  // buffer and halts the loop after a fixed number of frames so a headless
+  // browser can screenshot a settled image. Never used in normal browsing.
+  const gl = createContext(canvas, { preserveDrawingBuffer: captureFrames() > 0 });
+  if (!gl) throw new Error('WebGL2 unavailable');
+
+  const [
+    { Renderer, GOLDEN_HOUR },
+    { createOcean },
+    { createShip, shipPose, applyShipPose, SHIP },
+    { createInteriors },
+    { Journey, STOPS, MOODS },
+  ] = await Promise.all([
+    import('./scene/renderer.js'),
+    import('./scene/ocean.js'),
+    import('./scene/ship.js'),
+    import('./scene/interiors.js'),
+    import('./scene/journey.js'),
+  ]);
+
+  setProgress(0.35);
+
+  const renderer = new Renderer(gl, canvas);
+  const ocean = createOcean(gl);
+  setProgress(0.55);
+
+  const ship = createShip(gl);
+  setProgress(0.78);
+
+  const interiors = createInteriors(gl, ship.model);
+  const journey = new Journey(STOPS);
+  setProgress(0.94);
+
+  const solids = [...ship.batches, ...interiors.batches];
+  const vessel = {
+    position: [0, 0, 0],
+    heading: 0,
+    halfBeam: SHIP.beam / 2,
+    halfLength: SHIP.loa / 2,
+    shadow: 0.85,
+    wake: 1,
+  };
+
+  // Device pixel ratio is capped: beyond 2x the cost is real and the gain is not.
+  const resize = () => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    renderer.resize(
+      Math.max(320, Math.round(window.innerWidth * dpr)),
+      Math.max(240, Math.round(window.innerHeight * dpr)),
+    );
+  };
+  resize();
+  window.addEventListener('resize', debounce(resize, 140));
+
+  return {
+    renderer, ocean, ship, interiors, journey, solids, vessel,
+    GOLDEN_HOUR, MOODS, shipPose, applyShipPose,
+    stopCount: STOPS.length,
+  };
+}
+
+/* ------------------------------------------------------------- scroll model */
+
+/**
+ * The document is one viewport tall per voyage stop. Scroll position therefore
+ * maps linearly onto "stop units", which is what the camera consumes.
+ */
+function configureScrollHeight(stopCount) {
+  const perStop = Math.max(window.innerHeight * 0.92, 520);
+  state.scrollHeightPerStop = perStop;
+  document.body.style.height = `${perStop * (stopCount - 1) + window.innerHeight}px`;
+}
+
+function scrollProgress() {
+  if (!state.scrollHeightPerStop) return 0;
+  return window.scrollY / state.scrollHeightPerStop;
+}
+
+/* --------------------------------------------------------------- panel fades */
+
+function collectPanels() {
+  state.panels = $$('.panel').map((node) => ({
+    node,
+    stop: Number(node.dataset.stop || 0),
+    id: node.id,
+    shown: false,
+  }));
+}
+
+/**
+ * Fades panels with the camera. A panel is legible only near its own stop, and
+ * drifts slightly as it enters and leaves so the text feels attached to the
+ * camera move rather than pasted on top of it.
+ */
+function updatePanels(progress) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+
+  for (const panel of state.panels) {
+    const distance = Math.abs(progress - panel.stop);
+    const opacity = 1 - smoothstep(0.2, 0.66, distance);
+
+    if (opacity <= 0.001) {
+      if (panel.shown) {
+        panel.node.classList.remove('is-visible');
+        panel.node.style.opacity = '0';
+        panel.shown = false;
+      }
+      continue;
+    }
+
+    if (!panel.shown) {
+      panel.node.classList.add('is-visible');
+      panel.shown = true;
+    }
+
+    const signed = progress - panel.stop;
+    panel.node.style.opacity = String(opacity);
+    panel.node.style.transform =
+      `translate3d(0, ${(signed * 46).toFixed(2)}px, 0) scale(${(0.985 + opacity * 0.015).toFixed(4)})`;
+
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearest = panel;
+    }
+  }
+
+  if (nearest && nearest.id !== state.activeSection) {
+    state.activeSection = nearest.id;
+    setActiveSection(nearest.id);
+    // Keep the address bar honest without adding history entries.
+    if (window.history.replaceState) {
+      window.history.replaceState(null, '', `#${nearest.id}`);
+    }
+  }
+}
+
+function updateVoyageRail(progress, stopCount) {
+  const fill = $('#voyageFill');
+  if (fill) {
+    const ratio = clamp(progress / Math.max(stopCount - 1, 1), 0, 1);
+    fill.style.height = `${(ratio * 100).toFixed(2)}%`;
+  }
+}
+
+/* ------------------------------------------------------------------ the loop */
+
+function startLoop(scene) {
+  const {
+    renderer, ocean, journey, solids, vessel, interiors,
+    GOLDEN_HOUR, MOODS, shipPose, applyShipPose, stopCount,
+  } = scene;
+
+  let last = performance.now();
+  let currentSpace = undefined;
+  const frameBudget = captureFrames();
+  let frameCount = 0;
+
+  const pointer = { x: 0, y: 0 };
+  window.addEventListener('pointermove', (event) => {
+    pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+    pointer.y = (event.clientY / window.innerHeight) * 2 - 1;
+  }, { passive: true });
+
+  // On touch devices the "pointer" is the scroll itself; leave sway at rest.
+  window.addEventListener('touchstart', () => { pointer.x = 0; pointer.y = 0; }, { passive: true });
+
+  function frame(now) {
+    if (!state.running) return;
+
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    const time = now / 1000;
+
+    journey.setProgress(scrollProgress());
+    journey.setPointer(pointer.x, pointer.y);
+    const camera = journey.update(dt, time);
+
+    // Mood: lighting, exposure and fog blend between stops.
+    const mood = journey.resolveMoodParameters();
+    renderer.setEnvironment({
+      fogDensity: mood.fogDensity,
+      exposure: mood.exposure,
+      vignette: mood.vignette,
+      bloomStrength: mood.bloomStrength,
+    });
+    renderer.ambientScale = mood.ambientScale;
+    renderer.setLights(journey.resolveLights());
+
+    // Only one interior is ever resident on screen.
+    const space = journey.visibleSpace;
+    if (space !== currentSpace) {
+      interiors.setVisible(space);
+      currentSpace = space;
+    }
+
+    const moodPreset = MOODS[journey.mood] || MOODS.exterior;
+
+    // Seat the vessel on the waves.
+    applyShipPose(scene.ship.model, shipPose(time, renderer.environment.waveScale));
+
+    renderer.render({
+      camera,
+      time,
+      ocean,
+      showOcean: moodPreset.showOcean !== false,
+      solids,
+      vessel,
+    });
+
+    updatePanels(journey.progress);
+    updateVoyageRail(journey.progress, stopCount);
+
+    frameCount++;
+    window.__boot.frames = frameCount;
+
+    if (frameBudget && frameCount >= frameBudget) {
+      // Settle and stop, so a headless capture gets a stable image.
+      state.running = false;
+      window.__boot.captured = true;
+
+      /**
+       * Renders `steps` frames on demand with a fixed timestep. The dev harness
+       * calls this after scrolling so the camera has time to ease into its new
+       * stop before the screenshot is taken.
+       */
+      window.__step = (steps = 60) => {
+        const fixed = 1 / 60;
+        for (let i = 0; i < steps; i++) {
+          // frame() halts itself once past the budget, so re-arm each iteration.
+          state.running = true;
+          last = performance.now() - fixed * 1000;
+          frame(performance.now());
+        }
+        state.running = false;
+        return {
+          progress: Number(journey.progress.toFixed(3)),
+          mood: journey.mood,
+          space: journey.visibleSpace,
+          section: state.activeSection,
+        };
+      };
+      return;
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  void GOLDEN_HOUR;
+  state.running = true;
+  requestAnimationFrame(frame);
+
+  // Pause rendering when the tab is hidden — no reason to burn a phone battery.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      state.running = false;
+    } else if (!state.running) {
+      state.running = true;
+      last = performance.now();
+      requestAnimationFrame(frame);
+    }
+  });
+}
+
+/* ------------------------------------------------------------------- loader */
+
+function setProgress(ratio) {
+  const fill = $('#loaderFill');
+  if (fill) fill.style.width = `${Math.round(clamp(ratio, 0, 1) * 100)}%`;
+}
+
+function dismissLoader() {
+  setProgress(1);
+  // One frame of settle time so the first rendered image is already correct.
+  requestAnimationFrame(() => {
+    setTimeout(() => document.documentElement.classList.remove('is-loading'), 220);
+  });
+}
+
+/** Switches permanently to the plain scrolling document. */
+function enableFallback(reason) {
+  document.documentElement.classList.add('no-3d');
+  document.body.style.height = 'auto';
+  window.__boot.mode = 'fallback';
+  window.__boot.reason = reason;
+
+  for (const panel of state.panels) {
+    panel.node.classList.add('is-visible');
+    panel.node.style.opacity = '1';
+    panel.node.style.transform = 'none';
+  }
+
+  // Native scroll spy, since there is no camera to derive the section from.
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) setActiveSection(entry.target.id);
+    }
+  }, { rootMargin: '-45% 0px -45% 0px' });
+
+  for (const panel of state.panels) observer.observe(panel.node);
+}
+
+/* --------------------------------------------------------------------- init */
+
+async function init() {
+  try {
+    await mountDOM();
+  } catch (error) {
+    recordError('dom', error);
+  }
+
+  collectPanels();
+  setProgress(0.18);
+
+  // Honour reduced-motion by not running the camera at all.
+  if (prefersReducedMotion()) {
+    enableFallback('prefers-reduced-motion');
+    dismissLoader();
+    return;
+  }
+
+  try {
+    const scene = await bootScene();
+    state.scene = scene;
+    state.journey = scene.journey;
+
+    configureScrollHeight(scene.stopCount);
+    window.addEventListener('resize', debounce(() => {
+      configureScrollHeight(scene.stopCount);
+    }, 160));
+
+    // Land on the section named in the URL, if any.
+    const hash = window.location.hash.slice(1);
+    if (hash) {
+      const panel = state.panels.find((p) => p.id === hash);
+      if (panel) {
+        window.scrollTo({ top: panel.stop * state.scrollHeightPerStop, behavior: 'auto' });
+        scene.journey.snapTo(panel.stop);
+      }
+    }
+
+    updatePanels(scene.journey.progress);
+    startLoop(scene);
+
+    window.__boot.mode = '3d';
+    window.__boot.containers = scene.ship.containerCount;
+    window.__boot.stops = scene.stopCount;
+  } catch (error) {
+    recordError('scene', error);
+    enableFallback(error && error.message ? error.message : 'scene boot failed');
+  }
+
+  dismissLoader();
+  registerServiceWorker();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init, { once: true });
+} else {
+  init();
+}
