@@ -219,9 +219,13 @@ function collectPanels() {
  * drifts slightly as it enters and leaves so the text feels attached to the
  * camera move rather than pasted on top of it.
  */
-function updatePanels(progress) {
+function updatePanels(progress, sceneFade = 0) {
   let nearest = null;
   let nearestDistance = Infinity;
+
+  // While the scene is cut to black the copy fades with it, so text is never
+  // left floating on an empty frame.
+  const legibility = 1 - sceneFade;
 
   for (const panel of state.panels) {
     const distance = Math.abs(progress - panel.stop);
@@ -242,7 +246,7 @@ function updatePanels(progress) {
     }
 
     const signed = progress - panel.stop;
-    panel.node.style.opacity = String(opacity);
+    panel.node.style.opacity = String(opacity * legibility);
     panel.node.style.transform =
       `translate3d(0, ${(signed * 46).toFixed(2)}px, 0) scale(${(0.985 + opacity * 0.015).toFixed(4)})`;
 
@@ -323,6 +327,9 @@ function startLoop(scene) {
 
     const moodPreset = MOODS[journey.mood] || MOODS.exterior;
 
+    // Cut to black while the camera passes through the hull between spaces.
+    renderer.fadeToBlack = journey.transitionFade();
+
     // Seat the vessel on the waves.
     applyShipPose(scene.ship.model, shipPose(time, renderer.environment.waveScale));
 
@@ -335,7 +342,7 @@ function startLoop(scene) {
       vessel,
     });
 
-    updatePanels(journey.progress);
+    updatePanels(journey.progress, renderer.fadeToBlack);
     updateVoyageRail(journey.progress, stopCount);
 
     frameCount++;
@@ -439,9 +446,12 @@ async function init() {
   collectPanels();
   setProgress(0.18);
 
-  // Honour reduced-motion by not running the camera at all.
-  if (prefersReducedMotion()) {
-    enableFallback('prefers-reduced-motion');
+  // Honour reduced-motion by not running the camera at all. `?no3d=1` is the
+  // same path, offered as an explicit escape hatch for slow devices and for
+  // anyone who simply wants to read the site.
+  const optedOut = new URLSearchParams(location.search).has('no3d');
+  if (optedOut || prefersReducedMotion()) {
+    enableFallback(optedOut ? 'opted out via ?no3d' : 'prefers-reduced-motion');
     dismissLoader();
     return;
   }

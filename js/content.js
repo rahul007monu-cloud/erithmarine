@@ -366,8 +366,6 @@ export const STRINGS = {
   'chat.fallbackNote': 'Answered from our own information pages.',
 
   'footer.tagline': 'Crew, technical and commercial ship management.',
-  'footer.quickLinks': 'Quick links',
-  'footer.services': 'Services',
   'footer.legal': 'Recruitment for shipboard employment is free of charge.',
   'footer.rights': 'All rights reserved.',
 

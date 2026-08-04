@@ -310,8 +310,27 @@ html.no-3d .scene-fallback { display: block; }
 
 .panel.is-visible { visibility: visible; pointer-events: auto; }
 
+/* Guarantees text contrast whatever the camera happens to be looking at. The
+   hero overrides this with a stronger, side-weighted version. */
+.panel:not(.panel--hero)::before {
+  content: "";
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(3, 8, 15, 0.80) 0%,
+    rgba(3, 8, 15, 0.52) 24%,
+    rgba(3, 8, 15, 0.48) 70%,
+    rgba(3, 8, 15, 0.72) 100%
+  );
+}
+
+html.no-3d .panel:not(.panel--hero)::before { display: none; }
+
 /* Panels never trap scroll: only their inner cards do, if they overflow. */
 .panel__inner {
+  position: relative;
+  z-index: 1;
   width: 100%;
   max-width: 640px;
   max-height: 100%;
@@ -626,9 +645,12 @@ h3 { font-size: 1rem; font-weight: 600; letter-spacing: 0.01em; }
 }
 
 .job__meta {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
-  gap: 0.5rem 1.1rem; margin-top: 0.75rem;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 0.6rem 1.1rem; margin-top: 0.8rem;
 }
+
+/* Each label/value pair is wrapped so the two never separate across columns. */
+.job__pair { display: block; min-width: 0; }
 
 .job__meta dt {
   font-size: 0.6rem; letter-spacing: 0.13em;
@@ -986,6 +1008,24 @@ h3 { font-size: 1rem; font-weight: 600; letter-spacing: 0.01em; }
   .trust__licence { margin-left: 0; text-align: left; width: 100%; }
 }
 
+@media (max-width: 900px) {
+  /*
+   * The hero scrim is weighted left-to-right, which works on a wide screen but
+   * leaves portrait text sitting on bright water. Re-weight it vertically.
+   */
+  .panel--hero::before {
+    background:
+      linear-gradient(180deg,
+        rgba(3, 8, 15, 0.86) 0%,
+        rgba(3, 8, 15, 0.62) 34%,
+        rgba(3, 8, 15, 0.58) 66%,
+        rgba(3, 8, 15, 0.30) 100%);
+  }
+  .panel--hero .display { font-size: clamp(1.95rem, 8.4vw, 2.9rem); }
+  .panel--hero .lede { font-size: 0.98rem; }
+  .cta-row { gap: 0.6rem; }
+}
+
 @media (max-width: 560px) {
   .chat { right: 0.6rem; left: 0.6rem; width: auto; }
   .fab--whatsapp { right: 0.7rem; }
@@ -1016,6 +1056,9 @@ html.no-3d .panel {
 html.no-3d .panel:first-child { padding-top: calc(7rem + env(safe-area-inset-top)); }
 html.no-3d .panel__inner { max-height: none; overflow: visible; }
 html.no-3d .scroll-hint { display: none; }
+/* The rail tracks camera progress, which does not exist in fallback mode. */
+html.no-3d .voyage { display: none; }
+html.no-3d { --rail: 0px; }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

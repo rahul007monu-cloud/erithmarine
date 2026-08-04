@@ -579,4 +579,37 @@ export class Journey {
     const index = clamp(Math.round(this.progress) + ahead, 0, this.lastIndex);
     return MOOD_SPACE[this.stops[index].mood] || null;
   }
+
+  /**
+   * Fade-to-black weight for the current position.
+   *
+   * Moving between two interiors means flying the camera through steel: hull
+   * plating, tank tops and container stacks all pass through frame. Rather than
+   * pretend that looks intentional, the transition is cut like film — black at
+   * the midpoint, clear at both ends.
+   *
+   * Exterior-to-interior gets a lighter dip, because passing through the deck
+   * for a moment reads as entering the ship rather than as a glitch.
+   *
+   * @returns {number} 0 (clear) to 1 (black)
+   */
+  transitionFade() {
+    const segment = clamp(Math.floor(this.progress), 0, this.lastIndex);
+    const next = clamp(segment + 1, 0, this.lastIndex);
+    if (segment === next) return 0;
+
+    const from = MOOD_SPACE[this.stops[segment].mood] || null;
+    const to = MOOD_SPACE[this.stops[next].mood] || null;
+    if (from === to) return 0;
+
+    const bothInterior = from !== null && to !== null;
+    // A cut between enclosed spaces has to be opaque; entering or leaving the
+    // hull only needs a dip.
+    const strength = bothInterior ? 1.0 : 0.5;
+
+    const local = this.progress - segment;
+    // sin^2 peaks at the midpoint and is exactly zero at both stops.
+    const curve = Math.sin(local * Math.PI);
+    return clamp(curve * curve * strength, 0, 1);
+  }
 }

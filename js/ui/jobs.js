@@ -40,10 +40,12 @@ function jobCard(job, onApply) {
         el('span', { class: 'job__tag', text: job.department }),
         el('span', { class: 'job__wage', text: job.salaryRange }),
       ]),
-      el('dl', { class: 'job__meta' }, meta.flatMap(([label, value]) => [
-        el('dt', { text: label }),
-        el('dd', { text: value }),
-      ])),
+      el('dl', { class: 'job__meta' }, meta.map(([label, value]) =>
+        el('div', { class: 'job__pair' }, [
+          el('dt', { text: label }),
+          el('dd', { text: value }),
+        ]),
+      )),
     ]),
     el('div', { class: 'job__action' }, [
       el('button', {

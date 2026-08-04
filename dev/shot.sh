@@ -48,7 +48,11 @@ if [ "$code" != "200" ]; then
 fi
 echo "server: HTTP ${code} ${PAGE}"
 
-agent-browser --session "$SESSION" viewport "${WIDTH}x${HEIGHT}" > /dev/null 2>&1
+# Size the window first, then load. Setting the viewport on an already-loaded
+# page does not re-run media queries or the scene's resize path, so the order
+# matters and the page is opened again afterwards.
+agent-browser --session "$SESSION" open "about:blank" > /dev/null 2>&1
+agent-browser --session "$SESSION" set viewport "$WIDTH" "$HEIGHT" 2>&1 | tail -1
 agent-browser --session "$SESSION" open "http://localhost:${PORT}${PAGE}" 2>&1 | tail -2
 
 sleep "$SETTLE"
@@ -59,7 +63,7 @@ if [ "$SCROLL" != "0" ]; then
   # When the page halted its render loop for capture, advance it manually so the
   # camera eases into the newly scrolled stop before the screenshot.
   agent-browser --session "$SESSION" eval \
-    "typeof window.__step === 'function' ? JSON.stringify(window.__step(150)) : 'no-step'" 2>&1 | tail -2
+    "typeof window.__step === 'function' ? JSON.stringify(window.__step(90)) : 'no-step'" 2>&1 | tail -2
   sleep 0.5
 fi
 
@@ -68,7 +72,7 @@ agent-browser --session "$SESSION" eval "document.title" 2>&1 | tail -2
 
 echo "--- diagnostics ---"
 agent-browser --session "$SESSION" eval \
-  "JSON.stringify({err: (window.__errors||[]).slice(0,6), boot: window.__boot||null, scrollY: Math.round(window.scrollY), h: document.documentElement.scrollHeight})" \
+  "JSON.stringify({err: (window.__errors||[]).slice(0,6), boot: window.__boot||null, scrollY: Math.round(window.scrollY), h: document.documentElement.scrollHeight, vh: window.innerHeight, perStop: Math.round((document.documentElement.scrollHeight - window.innerHeight) / ((window.__boot&&window.__boot.stops||13) - 1))})" \
   2>&1 | tail -3
 
 echo "--- screenshot ---"
